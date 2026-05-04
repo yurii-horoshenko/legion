@@ -166,6 +166,7 @@ function renderProjList(filter = '') {
   const f = filter.toLowerCase();
   $('#proj-list').innerHTML = PROJECTS
     .filter(p => p.name.toLowerCase().includes(f))
+    .sort((a, b) => a.name.localeCompare(b.name))
     .map(p => `
       <div class="proj-item ${p.id===S.projectId?'active':''}" data-id="${p.id}">
         <span class="proj-item-dot ${p.status||'ok'}"></span>
