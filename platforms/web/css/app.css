@@ -367,14 +367,37 @@ html, body { height: 100%; overflow: hidden; font-family: var(--sans); font-size
 .rail-proj-item:hover { color: var(--rail-text); }
 .rail-proj-item.active { color: var(--rail-active); }
 
-.rail-section-label {
+/* Agents header — collapsible, with count + add button */
+.rail-agents-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 14px 10px 6px 14px;
+  cursor: pointer;
+  user-select: none;
+}
+.rail-agents-caret {
+  font-size: 9px;
+  color: var(--rail-muted);
+  transition: transform var(--t);
+  flex-shrink: 0;
+}
+.rail-agents-label {
   font-family: var(--mono);
   font-size: 9px;
   letter-spacing: .12em;
   text-transform: uppercase;
   color: var(--rail-muted);
-  padding: 14px 14px 6px;
 }
+.rail-agents-count {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--rail-muted);
+  letter-spacing: 0;
+}
+.rail-agents-header:hover .rail-agents-label,
+.rail-agents-header:hover .rail-agents-caret,
+.rail-agents-header:hover .rail-agents-count { color: var(--rail-text); }
 
 /* Agent tree */
 .agent-tree {
@@ -383,39 +406,17 @@ html, body { height: 100%; overflow: hidden; font-family: var(--sans); font-size
   padding: 2px 6px;
 }
 
-.agent-group { margin-bottom: 2px; }
-
-.group-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
-  color: var(--rail-muted);
+.tree-empty {
+  padding: 8px 14px;
   font-size: 11px;
-  font-family: var(--mono);
-  letter-spacing: .04em;
-  cursor: pointer;
-  border-radius: var(--r);
-  user-select: none;
-  transition: color var(--t);
-}
-
-.group-header:hover { color: var(--rail-text); }
-
-.group-caret {
-  font-size: 9px;
-  transition: transform var(--t);
   color: var(--rail-muted);
 }
-
-.agent-group.collapsed .group-caret { transform: rotate(-90deg); }
-.agent-group.collapsed .group-body  { display: none; }
 
 .agent-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px 6px 20px;
+  padding: 6px 8px 6px 12px;
   border-radius: var(--r);
   cursor: pointer;
   transition: background var(--t);

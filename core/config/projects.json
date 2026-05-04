@@ -6,5 +6,21 @@
     "status": "ok",
     "agents": 0,
     "id": "e3ad622f-987b-46ef-9114-b5c195047b05"
+  },
+  {
+    "name": "VisiTime",
+    "description": "",
+    "path": "/Users/gi_part/Standart/Projects/VisiTime",
+    "status": "ok",
+    "agents": 0,
+    "id": "558dadd4-f06b-4741-aa5f-e71531457c6f"
+  },
+  {
+    "name": "VisiTimeContent",
+    "description": "",
+    "path": "/Users/gi_part/Standart/Projects/VisiTimeContent",
+    "status": "ok",
+    "agents": 0,
+    "id": "dd0cd474-153e-44e3-b4ed-e48232060f2e"
   }
 ]

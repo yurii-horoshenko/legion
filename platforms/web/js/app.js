@@ -209,35 +209,38 @@ function closeProj() {
 
 function renderTree() {
   const agents = projectAgents();
-  const groups = groupBy(agents, 'group');
-  const entries = Object.entries(groups);
 
-  if (entries.length === 0) {
-    $('#agent-tree').innerHTML = `<div style="padding:16px 14px;font-size:11px;color:var(--rail-muted)">No agents yet — add from catalog</div>`;
+  // Update count badge in header
+  const countEl = $('#rail-agents-count');
+  if (countEl) countEl.textContent = agents.length ? `(${agents.length})` : '';
+
+  if (agents.length === 0) {
+    $('#agent-tree').innerHTML = `<div class="tree-empty">No agents yet — add from catalog</div>`;
     return;
   }
 
-  $('#agent-tree').innerHTML = entries.map(([g, list]) => `
-    <div class="agent-group" data-group="${esc(g)}">
-      <div class="group-header">
-        <span class="group-caret">▾</span>
-        <span>${esc(g)}</span>
-        <span style="margin-left:auto;font-size:9px">${list.length}</span>
-      </div>
-      <div class="group-body">
-        ${list.map(a => `
-          <div class="agent-row ${a.id===S.agentId?'active':''}" data-id="${a.id}">
-            <span class="a-dot ${a.status||'idle'}"></span>
-            <span class="a-name">${esc(a.name)}</span>
-            ${(a.workers||0) > 0 ? `<span class="a-badge">${a.workers}w</span>` : ''}
-          </div>`).join('')}
-      </div>
+  $('#agent-tree').innerHTML = agents.map(a => `
+    <div class="agent-row ${a.id===S.agentId?'active':''}" data-id="${a.id}">
+      <span class="a-dot ${a.status||'idle'}"></span>
+      <span class="a-name">${esc(a.name)}</span>
+      ${(a.workers||0) > 0 ? `<span class="a-badge">${a.workers}w</span>` : ''}
     </div>`).join('');
 
   $$('.agent-row').forEach(el => el.addEventListener('click', () => selectAgent(el.dataset.id)));
-  $$('.group-header').forEach(el => el.addEventListener('click', () => {
-    el.closest('.agent-group').classList.toggle('collapsed');
-  }));
+}
+
+function initAgentsHeaderToggle() {
+  const header = $('#rail-agents-header');
+  const tree   = $('#agent-tree');
+  const caret  = $('#rail-agents-caret');
+  if (!header || !tree) return;
+  let collapsed = false;
+  header.addEventListener('click', e => {
+    if (e.target.id === 'btn-add-agent') return; // don't collapse on + click
+    collapsed = !collapsed;
+    tree.style.display = collapsed ? 'none' : '';
+    caret.textContent  = collapsed ? '▸' : '▾';
+  });
 }
 
 // ── Dashboard ──────────────────────────────────────────────────────────────
@@ -2154,6 +2157,7 @@ async function init() {
 
   // Catalog filters (delegated) + back + search
   initCatalogFilterListener();
+  initAgentsHeaderToggle();
   $('#catalog-back').addEventListener('click', hideCatalog);
   $('#catalog-search').addEventListener('input', e => {
     catalogSearch = e.target.value;
