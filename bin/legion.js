@@ -1034,6 +1034,7 @@ function cmdWeb(args) {
         console.error("[analyze]", err.message);
         fail(err.message);
       }
+      return; // SSE response already ended — do not fall through to 404 handler
     }
 
     // Reject unknown API routes before falling through to static files
