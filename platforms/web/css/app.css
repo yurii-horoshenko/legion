@@ -2276,6 +2276,7 @@ html, body { height: 100%; overflow: hidden; font-family: var(--sans); font-size
 .analyze-card-name { font-size: 13px; font-weight: 600; color: var(--text); }
 .analyze-card-meta { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; flex-wrap: wrap; }
 .analyze-card-id { font-size: 10px; font-family: var(--mono); color: var(--text-3); }
+.analyze-card-covers { font-size: 10px; color: var(--accent); font-family: var(--mono); margin-bottom: 4px; }
 .analyze-card-reason { font-size: 11px; color: var(--text-3); line-height: 1.5; }
 .analyze-exists { font-size: 11px; color: var(--ok); font-family: var(--mono); }
 

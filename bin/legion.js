@@ -865,10 +865,38 @@ function cmdWeb(args) {
         const needsKey = !["ollama", "claude-cli"].includes(provider.type);
         if (needsKey && !provider.key && !model.key) return fail("Provider not configured or missing API key");
 
-        progress("Loading prompt template…");
-        const promptFile = path.resolve(webRoot, "../../core/prompts/analyze.md");
-        const promptTpl  = fs.existsSync(promptFile) ? fs.readFileSync(promptFile, "utf8") : "";
+        // ── Domain detection groups ──────────────────────────────────────────
+        const DOMAIN_GROUPS = {
+          game:      new Set(['game-development', 'engineering', 'testing', 'project-management', 'design', 'specialized', 'spatial-computing']),
+          web:       new Set(['engineering', 'design', 'testing', 'project-management', 'product', 'specialized', 'marketing']),
+          mobile:    new Set(['engineering', 'design', 'testing', 'project-management', 'product', 'specialized']),
+          backend:   new Set(['engineering', 'testing', 'project-management', 'specialized', 'product']),
+          marketing: new Set(['marketing', 'design', 'product', 'specialized', 'paid-media', 'sales']),
+          assistant: new Set(['specialized', 'support', 'project-management', 'academic']),
+          general:   null, // all groups
+        };
 
+        function detectDomain(text) {
+          const t = (text || '').toLowerCase();
+          if (/unreal|unity|godot|\bgame\b|gameplay|mmo|fps|rpg|npc|loot|quest|level design|matchmaking/.test(t)) return 'game';
+          if (/\bios\b|android|swift\b|kotlin|flutter|react native|mobile app/.test(t)) return 'mobile';
+          if (/react|vue|angular|svelte|nextjs|frontend|web app|saas|dashboard|html|css/.test(t)) return 'web';
+          if (/\bapi\b|microservice|postgresql|mongodb|redis|graphql|rest\b|fastapi|express|django/.test(t)) return 'backend';
+          if (/marketing|seo|content strateg|social media|campaign|brand/.test(t)) return 'marketing';
+          if (/personal assistant|calendar|email|reminder|schedule|note.tak/.test(t)) return 'assistant';
+          return 'general';
+        }
+
+        function parseJson(raw) {
+          const stripped = raw.replace(/^```(?:json)?\s*/m, "").replace(/\s*```\s*$/m, "").trim();
+          const jsonStr  = stripped.startsWith("{") || stripped.startsWith("[")
+            ? stripped
+            : (stripped.match(/\{[\s\S]*\}/)?.[0] || "");
+          if (!jsonStr) throw new Error(`Non-JSON response: ${raw.slice(0, 200)}`);
+          return JSON.parse(jsonStr);
+        }
+
+        // ── Read existing agents ─────────────────────────────────────────────
         progress("Reading existing agents…");
         const pagents      = (() => { try { return JSON.parse(fs.readFileSync(pagentsFile, "utf8")); } catch { return {}; } })();
         const existingList = pagents[pid] || [];
@@ -876,6 +904,7 @@ function cmdWeb(args) {
           ? existingList.map(a => `- ${a.name}${a.role ? ` (${a.role})` : ""}`).join("\n")
           : "None yet";
 
+        // ── Scan project docs ────────────────────────────────────────────────
         progress("Scanning project documentation…");
         const docParts = [];
         if (project.path) {
@@ -899,38 +928,67 @@ function cmdWeb(args) {
         const projectDocs = docParts.length
           ? `Found ${docParts.length} file(s): ${docParts.map(p => p.match(/^### (.+)/)?.[1]).join(", ")}\n\n` + docParts.join("\n\n")
           : "No documentation found.";
-        progress(docParts.length ? `Read ${docParts.length} documentation file(s)` : "No documentation files found, using project metadata only");
+        progress(docParts.length ? `Read ${docParts.length} documentation file(s)` : "No documentation files found");
 
+        // ── Detect domain (server-side, no AI call) ──────────────────────────
+        const domainHint = detectDomain((project.description || '') + ' ' + docParts.slice(0, 2).join(' '));
+        progress(`Domain detected: ${domainHint}`);
+
+        // ── Load & filter catalog ────────────────────────────────────────────
         progress("Loading agent catalog…");
         const catalogFile   = path.join(webRoot, "data", "agents-catalog.json");
         const catalogAgents = fs.existsSync(catalogFile)
           ? (() => { try { return JSON.parse(fs.readFileSync(catalogFile, "utf8")); } catch { return []; } })()
           : [];
-        const existingIds = new Set(existingList.map(a => a.catalogId).filter(Boolean));
-        const available   = catalogAgents.filter(a => !existingIds.has(a.id));
-        const catalogText = available.map(a => `- id: "${a.id}" | group: ${a.group} | name: ${a.name} | ${a.description}`).join("\n");
-        progress(`Catalog loaded: ${available.length} agents available across ${new Set(available.map(a => a.group)).size} groups`);
+        const existingIds   = new Set(existingList.map(a => a.catalogId).filter(Boolean));
+        const allowedGroups = DOMAIN_GROUPS[domainHint];
+        const available     = catalogAgents.filter(a =>
+          !existingIds.has(a.id) && (!allowedGroups || allowedGroups.has(a.group))
+        );
+        // Build rich catalog text: id | group | name | capabilities | description
+        const catalogText = available.map(a => {
+          const caps = a.capabilities?.length ? ` | capabilities: ${a.capabilities.join(', ')}` : '';
+          return `- id: "${a.id}" | group: ${a.group} | name: ${a.name}${caps} | ${a.description}`;
+        }).join("\n");
+        progress(`Catalog filtered: ${available.length} agents in ${[...new Set(available.map(a => a.group))].join(', ')}`);
 
         if (aborted) return;
 
-        progress(`Sending prompt to ${provider.name || provider.type} / ${model.name || model.modelId}…`);
-        const prompt = promptTpl
+        // ── PASS 1: extract functional areas ─────────────────────────────────
+        progress("Pass 1 — Extracting functional requirements…");
+        const pass1File = path.resolve(webRoot, "../../core/prompts/analyze-pass1.md");
+        const pass1Tpl  = fs.existsSync(pass1File) ? fs.readFileSync(pass1File, "utf8") : "";
+        const pass1Prompt = pass1Tpl
           .replace("{{project_name}}",        project.name)
           .replace("{{project_description}}", project.description || "No description")
-          .replace("{{project_path}}",        project.path ? `Path: ${project.path}` : "")
-          .replace("{{existing_agents}}",     existingAgents)
           .replace("{{project_docs}}",        projectDocs)
+          .replace("{{existing_agents}}",     existingAgents);
+
+        const pass1Raw  = await callAI(model, provider, pass1Prompt);
+        if (aborted) return;
+        const pass1     = parseJson(pass1Raw);
+        const funcAreas = (pass1.functional_areas || []).join("\n- ");
+        const covered   = (pass1.covered_by_existing || []).join("\n- ") || "Nothing yet";
+        progress(`Found ${pass1.functional_areas?.length || 0} functional areas: ${(pass1.functional_areas || []).slice(0, 3).join(', ')}…`);
+
+        // ── PASS 2: match agents to requirements ─────────────────────────────
+        progress("Pass 2 — Matching agents to requirements…");
+        const pass2File = path.resolve(webRoot, "../../core/prompts/analyze.md");
+        const pass2Tpl  = fs.existsSync(pass2File) ? fs.readFileSync(pass2File, "utf8") : "";
+        const pass2Prompt = pass2Tpl
+          .replace("{{project_name}}",        project.name)
+          .replace("{{project_description}}", project.description || "No description")
+          .replace("{{tech_stack}}",          (pass1.tech_stack || []).join(', ') || "Unknown")
+          .replace("{{functional_areas}}",    funcAreas ? `- ${funcAreas}` : "No specific areas identified")
+          .replace("{{covered_by_existing}}", covered)
+          .replace("{{existing_agents}}",     existingAgents)
           .replace("{{catalog}}",             catalogText);
 
-        const raw = await callAI(model, provider, prompt);
+        const pass2Raw = await callAI(model, provider, pass2Prompt);
         if (aborted) return;
 
         progress("Parsing response…");
-        const stripped = raw.replace(/^```(?:json)?\s*/m, "").replace(/\s*```\s*$/m, "").trim();
-        let jsonStr = stripped.startsWith("{") ? stripped : (stripped.match(/\{[\s\S]*\}/)?.[0] || "");
-        if (!jsonStr) return fail(`AI returned non-JSON response: ${raw.slice(0, 200)}`);
-
-        const result = JSON.parse(jsonStr);
+        const result = parseJson(pass2Raw);
         progress(`Done — ${result.agents?.length || 0} agents recommended, ${result.pipelines?.length || 0} pipelines suggested`);
         done(result);
 

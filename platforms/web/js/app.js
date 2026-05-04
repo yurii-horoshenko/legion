@@ -1769,7 +1769,9 @@ async function runAnalyze() {
 
     function agentCardHtml(ag, i) {
       const exists = existingNames().has(ag.name.toLowerCase());
-      const tier   = ag.tier === 'mandatory' ? `<span class="analyze-tier mandatory">mandatory</span>` : `<span class="analyze-tier additional">additional</span>`;
+      const tier   = ag.tier === 'mandatory'
+        ? `<span class="analyze-tier mandatory">mandatory</span>`
+        : `<span class="analyze-tier additional">additional</span>`;
       return `
         <div class="analyze-card" data-idx="${i}">
           <div class="analyze-card-head">
@@ -1782,6 +1784,7 @@ async function runAnalyze() {
             ${tier}
             ${ag.id ? `<span class="analyze-card-id">${esc(ag.id)}</span>` : ''}
           </div>
+          ${ag.covers ? `<div class="analyze-card-covers">↳ ${esc(ag.covers)}</div>` : ''}
           <div class="analyze-card-reason">${esc(ag.reason)}</div>
         </div>`;
     }
