@@ -689,7 +689,7 @@ function cmdWeb(args) {
 
     // ── Agent data stores (tasks / cron / workers / channels / memories) ──────
     // Pattern: GET/POST/PATCH/DELETE /api/projects/:pid/agents/:aid/:store[/:itemId]
-    const storeMatch = urlPath.match(/^\/api\/projects\/([^/]+)\/agents\/([^/]+)\/(tasks|cron|workers|channels|memories)(?:\/([^/]+))?$/);
+    const storeMatch = urlPath.match(/^\/api\/projects\/([^/]+)\/agents\/([^/]+)\/(tasks|cron|workers|channels|memories|pipeline)(?:\/([^/]+))?$/);
     if (storeMatch) {
       const [, projectId, agentId, store, itemId] = storeMatch;
       if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(agentId)) return json(res, 400, { error: "Invalid agent ID" });

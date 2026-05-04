@@ -1899,17 +1899,26 @@ async function runAnalyze() {
     if (allBtn) {
       allBtn.addEventListener('click', async () => {
         allBtn.disabled = true;
+
+        // Step 1: add all new agents sequentially
         allBtn.textContent = 'Adding agents…';
         const toAdd = agents.filter(ag => !projectAgents().some(a => a.name.toLowerCase() === ag.name.toLowerCase()));
         for (const ag of toAdd) {
           const cardBtn = resultsEl.querySelector(`.btn-analyze-add[data-idx="${agents.indexOf(ag)}"]`);
           await addAgent(ag, cardBtn);
         }
+
+        // Step 2: reload agent list so all new agents are visible before pipeline lookup
+        await loadProjectAgents(S.projectId);
+        renderTree();
+
+        // Step 3: apply all pipelines
         allBtn.textContent = 'Applying pipelines…';
         for (const p of pipelines) {
           const pipeBtn = resultsEl.querySelector(`.btn-analyze-pipe[data-idx="${pipelines.indexOf(p)}"]`);
           await applyPipe(p, pipeBtn);
         }
+
         allBtn.textContent = '✓ Done';
       });
     }
