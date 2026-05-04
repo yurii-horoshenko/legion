@@ -1803,9 +1803,12 @@ async function runAnalyze() {
         </div>`;
     }
 
-    const half   = Math.ceil(agents.length / 2);
-    const col1   = agents.slice(0, half);
-    const col2   = agents.slice(half);
+    const aHalf  = Math.ceil(agents.length / 2);
+    const aCol1  = agents.slice(0, aHalf);
+    const aCol2  = agents.slice(aHalf);
+    const pHalf  = Math.ceil(pipelines.length / 2);
+    const pCol1  = pipelines.slice(0, pHalf);
+    const pCol2  = pipelines.slice(pHalf);
 
     const resultsEl = document.createElement('div');
     resultsEl.className = 'analyze-results';
@@ -1824,17 +1827,28 @@ async function runAnalyze() {
           : ''}
       </div>
       <div class="analyze-columns">
-        <div class="analyze-col">
-          ${col1.map((ag, i) => agentCardHtml(ag, i)).join('')}
+        <div class="analyze-section-group">
+          <div class="analyze-group-label">Agents <span class="analyze-group-count">${agents.length}</span></div>
+          <div class="analyze-group-cols">
+            <div class="analyze-col">
+              ${aCol1.map((ag, i) => agentCardHtml(ag, i)).join('')}
+            </div>
+            <div class="analyze-col">
+              ${aCol2.map((ag, i) => agentCardHtml(ag, i + aHalf)).join('')}
+            </div>
+          </div>
         </div>
-        <div class="analyze-col">
-          ${col2.map((ag, i) => agentCardHtml(ag, i + half)).join('')}
-        </div>
-        <div class="analyze-col analyze-col-pipes">
-          <div class="analyze-col-label">Pipelines</div>
-          ${pipelines.length
-            ? pipelines.map((p, i) => pipeHtml(p, i)).join('')
-            : `<div class="analyze-empty">No pipelines suggested</div>`}
+        <div class="analyze-section-group">
+          <div class="analyze-group-label">Pipelines <span class="analyze-group-count">${pipelines.length}</span></div>
+          <div class="analyze-group-cols">
+            <div class="analyze-col">
+              ${pCol1.map((p, i) => pipeHtml(p, i)).join('')}
+              ${!pCol1.length ? `<div class="analyze-empty">No pipelines suggested</div>` : ''}
+            </div>
+            <div class="analyze-col">
+              ${pCol2.map((p, i) => pipeHtml(p, i + pHalf)).join('')}
+            </div>
+          </div>
         </div>
       </div>`;
     $('#analyze-body').appendChild(resultsEl);
