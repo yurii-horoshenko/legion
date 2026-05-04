@@ -647,7 +647,7 @@ function cmdWeb(args) {
       if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(agentId)) return json(res, 400, { error: "Invalid agent ID" });
       const project   = readProjects().find(p => p.id === projectId);
       if (!project?.path) return json(res, 404, { error: "Project has no path" });
-      const allowed = ["agent.md", "AGENTS.md", "IDENTITY.md", "SOUL.md", "USER.md", "MEMORY.md", "CONTEXT.md", "SKILLS.md"];
+      const allowed = ["agent.md", "AGENTS.md", "IDENTITY.md", "SOUL.md", "USER.md", "MEMORY.md", "CONTEXT.md", "SKILLS.md", "PIPELINE.md"];
       if (!allowed.includes(filename)) return json(res, 400, { error: "Invalid file" });
       const agentDir = path.join(project.path, ".legion", "agents", agentId);
       // Migrate flat file → directory if needed
@@ -678,7 +678,7 @@ function cmdWeb(args) {
       if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(agentId)) return json(res, 400, { error: "Invalid agent ID" });
       const project   = readProjects().find(p => p.id === projectId);
       if (!project?.path) return json(res, 404, { error: "Project has no path" });
-      const allowed = ["agent.md", "AGENTS.md", "IDENTITY.md", "SOUL.md", "USER.md", "MEMORY.md", "CONTEXT.md", "SKILLS.md"];
+      const allowed = ["agent.md", "AGENTS.md", "IDENTITY.md", "SOUL.md", "USER.md", "MEMORY.md", "CONTEXT.md", "SKILLS.md", "PIPELINE.md"];
       if (!allowed.includes(filename)) return json(res, 400, { error: "Invalid file" });
       const body     = await readBody(req);
       const filePath = path.join(project.path, ".legion", "agents", agentId, filename);
@@ -715,6 +715,24 @@ function cmdWeb(args) {
         fs.renameSync(tmp, f);
       }
 
+      // After any pipeline mutation, regenerate PIPELINE.md for human/AI readability
+      function syncPipelineMd(list) {
+        if (store !== "pipeline" || !project?.path) return;
+        const agentMap = {};
+        (readPAgents()[projectId] || []).forEach(a => { agentMap[a.id] = a.name || a.id; });
+        const agentName = agentMap[agentId] || agentId;
+        const rows = list.map(p => {
+          const toName = agentMap[p.targetAgentId] || p.targetAgentId || "?";
+          return `| ${toName} | ${p.condition || "always"} | ${p.mode || "sequential"} | ${p.event || "task_complete"} |`;
+        });
+        const md = rows.length
+          ? `# PIPELINE.md — ${agentName}\n\nOutgoing triggers after task completion.\n\n| To Agent | Condition | Mode | Event |\n|----------|-----------|------|-------|\n${rows.join("\n")}\n`
+          : `# PIPELINE.md — ${agentName}\n\nNo outgoing triggers configured.\n`;
+        const mdPath = path.join(project.path, ".legion", "agents", agentId, "PIPELINE.md");
+        fs.mkdirSync(path.dirname(mdPath), { recursive: true });
+        fs.writeFileSync(mdPath, md);
+      }
+
       if (method === "GET" && !itemId) {
         return json(res, 200, readStore());
       }
@@ -724,6 +742,7 @@ function cmdWeb(args) {
         const list = readStore();
         list.push(item);
         writeStore(list);
+        syncPipelineMd(list);
         return json(res, 200, item);
       }
       if ((method === "PATCH" || method === "PUT") && itemId) {
@@ -733,11 +752,13 @@ function cmdWeb(args) {
         if (idx < 0) return json(res, 404, { error: "Not found" });
         list[idx] = { ...list[idx], ...body, id: itemId, updatedAt: new Date().toISOString() };
         writeStore(list);
+        syncPipelineMd(list);
         return json(res, 200, list[idx]);
       }
       if (method === "DELETE" && itemId) {
         const list = readStore().filter(x => x.id !== itemId);
         writeStore(list);
+        syncPipelineMd(list);
         return json(res, 200, { ok: true });
       }
     }
