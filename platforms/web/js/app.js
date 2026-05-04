@@ -113,6 +113,9 @@ async function loadProjectAgents(projectId) {
     const agents = await res.json();
     PROJECT_AGENTS[projectId] = agents;
     agents.forEach(a => { AGENT_REGISTRY[a.id] = a; });
+    // Keep PROJECTS count in sync
+    const p = PROJECTS.find(x => x.id === projectId);
+    if (p) p.agents = agents.length;
   } catch { PROJECT_AGENTS[projectId] = []; }
 }
 
@@ -170,7 +173,7 @@ function renderProjList(filter = '') {
           <span class="proj-item-name">${esc(p.name)}</span>
           ${p.path ? `<span class="proj-item-path">${esc(p.path)}</span>` : ''}
         </div>
-        <span class="proj-item-count">${p.agents||0} agents</span>
+        <span class="proj-item-count">${PROJECT_AGENTS[p.id]?.length ?? p.agents ?? 0} agents</span>
       </div>`).join('');
 
   $$('.proj-item').forEach(el => {
@@ -361,6 +364,8 @@ function renderAgentOverview(a) {
     await apiRemoveAgent(S.projectId, a.id);
     if (PROJECT_AGENTS[S.projectId]) {
       PROJECT_AGENTS[S.projectId] = PROJECT_AGENTS[S.projectId].filter(x => x.id !== a.id);
+      const p = PROJECTS.find(x => x.id === S.projectId);
+      if (p) p.agents = PROJECT_AGENTS[S.projectId].length;
     }
     delete AGENT_REGISTRY[a.id];
     addedAgentIds.delete(a.id);
