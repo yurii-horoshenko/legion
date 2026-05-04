@@ -1858,13 +1858,22 @@ async function runAnalyze() {
 
     async function addAgent(ag, btn) {
       if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
+      // Use full catalog object if available (has id, color, emoji, etc.)
+      // Fall back to synthesized object with a slug id derived from the catalog id or name
+      const catalogEntry = CATALOG_AGENTS.find(c => c.id === ag.id) ||
+                           CATALOG_AGENTS.find(c => c.name.toLowerCase() === ag.name.toLowerCase());
+      const slugId = ag.id || ag.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const payload = catalogEntry
+        ? { ...catalogEntry, role: ag.reason, status: 'idle' }
+        : { id: slugId, name: ag.name, role: ag.reason, catalogId: ag.id || null, status: 'idle', group: 'custom' };
+
       const r = await fetch(`/api/projects/${S.projectId}/agents`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: ag.name, role: ag.reason, catalogId: ag.id || null, status: 'idle' }),
+        body: JSON.stringify(payload),
       });
       if (btn) btn.textContent = r.ok ? '✓ Added' : '✗ Failed';
       if (r.ok) { await loadProjectAgents(S.projectId); renderTree(); }
-      else if (btn) btn.disabled = false;
+      else if (btn) { btn.disabled = false; console.error('addAgent failed', await r.text?.().catch(()=>'')); }
       return r.ok;
     }
 

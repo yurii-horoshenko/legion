@@ -610,6 +610,11 @@ function cmdWeb(args) {
     if (urlPath.match(/^\/api\/projects\/[^/]+\/agents$/) && method === "POST") {
       const projectId = urlPath.split("/")[3];
       const agent     = await readBody(req);
+      // Ensure agent always has an id — derive from catalogId or name slug
+      if (!agent.id) {
+        agent.id = agent.catalogId ||
+          (agent.name || "agent").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      }
       const map       = readPAgents();
       if (!map[projectId]) map[projectId] = [];
       const existing  = map[projectId].findIndex(a => a.id === agent.id);
