@@ -1,0 +1,3 @@
+node_modules/
+core/config/.keys.json
+platforms/web/data/agents-catalog.json
