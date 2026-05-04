@@ -1686,17 +1686,47 @@ async function runAnalyze() {
   runBtn.textContent = '✦ Analyzing…';
   if (stopBtn) stopBtn.style.display = 'inline-flex';
 
-  const logEl = document.createElement('div');
-  logEl.className = 'analyze-log';
+  // Build collapsible log block
+  const logWrap = document.createElement('div');
+  logWrap.className = 'analyze-log-wrap';
+  logWrap.innerHTML = `
+    <div class="analyze-log-header">
+      <span class="analyze-log-title">Process Log</span>
+      <button class="analyze-log-toggle" title="Collapse">▾</button>
+    </div>
+    <div class="analyze-log-body"></div>`;
   $('#analyze-body').innerHTML = '';
-  $('#analyze-body').appendChild(logEl);
+  $('#analyze-body').appendChild(logWrap);
+
+  const logBody   = logWrap.querySelector('.analyze-log-body');
+  const toggleBtn = logWrap.querySelector('.analyze-log-toggle');
+  let   collapsed = false;
+  let   lastStep  = null;
+
+  toggleBtn.addEventListener('click', () => {
+    collapsed = !collapsed;
+    logBody.style.display = collapsed ? 'none' : '';
+    toggleBtn.textContent = collapsed ? '▸' : '▾';
+    toggleBtn.title = collapsed ? 'Expand' : 'Collapse';
+  });
 
   const addLog = (msg, type = 'step') => {
+    // Mark previous step as done when a new step arrives
+    if (type === 'step' && lastStep) {
+      lastStep.classList.add('analyze-log-done');
+      lastStep.querySelector('.analyze-log-icon').textContent = '✓';
+    }
     const line = document.createElement('div');
     line.className = `analyze-log-line analyze-log-${type}`;
-    line.textContent = (type === 'step' ? '› ' : type === 'ok' ? '✓ ' : '✗ ') + msg;
-    logEl.appendChild(line);
-    logEl.scrollTop = logEl.scrollHeight;
+    const icon = type === 'step' ? '›' : type === 'ok' ? '✓' : '✗';
+    line.innerHTML = `<span class="analyze-log-icon">${icon}</span><span class="analyze-log-text">${msg}</span>`;
+    logBody.appendChild(line);
+    if (type === 'step') lastStep = line;
+    if (type !== 'step' && lastStep) {
+      lastStep.classList.add('analyze-log-done');
+      lastStep.querySelector('.analyze-log-icon').textContent = '✓';
+      lastStep = null;
+    }
   };
 
   _analyzeController = new AbortController();
