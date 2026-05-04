@@ -2172,9 +2172,9 @@ html, body { height: 100%; overflow: hidden; font-family: var(--sans); font-size
 #view-analyze {
   display: none;
   padding: 32px 36px;
-  max-width: 900px;
   overflow-y: auto;
   flex: 1;
+  min-width: 0;
 }
 #view-analyze.on { display: flex; flex-direction: column; gap: 24px; }
 
