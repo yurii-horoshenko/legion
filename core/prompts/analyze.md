@@ -46,11 +46,16 @@ Recommend agents in two tiers:
 
 If you include a mandatory agent, explain specifically why it fits — do not add it by default.
 
-**Additional** — recommend ALL catalog agents that are genuinely relevant to this specific project. Do NOT artificially limit the count. Think about every functional area: frontend, backend, DevOps, security, data, design, domain-specific roles, etc.
+**Additional** — recommend only agents that this project would actively need on a weekly basis, based on the specific tech stack, domain, and gaps identified. Apply the hiring test: "Would this project realistically hire someone in this role right now?"
 
-For each agent, explain specifically WHY it fits this project — reference actual details from the documentation (tech stack, KPIs, specific systems mentioned). Generic reasons are not acceptable.
+Rules:
+- Cover the core functional areas this project actually touches — no more.
+- Do NOT add agents just because they could theoretically help any project (e.g. don't add a Marketing agent to a backend API unless marketing is explicitly in scope).
+- Do NOT pad with adjacent roles. If the project needs a Backend Developer, don't also add a Database Optimizer and a Data Engineer unless the docs specifically mention scale/data challenges.
+- Domain-specific agents (e.g. Game Designer, Level Designer for a game) count strongly — include them.
+- Typical total: 6–14 agents for most projects. More than 15 almost always means you're padding.
 
-Do NOT recommend agents that are clearly irrelevant to the project domain.
+For each agent, state ONE concrete reason tied to something specific in the project docs — a named technology, a stated goal, a gap in the existing team. Vague reasons ("could help with quality") are not acceptable.
 
 ### Step 3 — Suggest pipelines
 
