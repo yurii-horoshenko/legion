@@ -908,7 +908,8 @@ function cmdWeb(args) {
         progress("Scanning project documentation…");
         const docParts = [];
         if (project.path) {
-          const docCandidates = ["README.md", "readme.md", "README.txt", "package.json", "pyproject.toml", "Cargo.toml", "CLAUDE.md", "AGENTS.md"];
+          // AGENTS.md intentionally excluded — may contain historical agent lists from other systems
+          const docCandidates = ["README.md", "readme.md", "README.txt", "package.json", "pyproject.toml", "Cargo.toml", "CLAUDE.md"];
           for (const f of docCandidates) {
             const fp = path.join(project.path, f);
             if (fs.existsSync(fp)) {
@@ -918,7 +919,9 @@ function cmdWeb(args) {
           const docsDir = path.join(project.path, "docs");
           if (fs.existsSync(docsDir)) {
             try {
-              const files = fs.readdirSync(docsDir).filter(f => /\.(md|txt)$/i.test(f)).slice(0, 5);
+              // Skip agent-list files — they describe historical/planned agents, not architecture
+              const SKIP_DOCS = /^(agents|03-agents|agent-list|aifactory)/i;
+              const files = fs.readdirSync(docsDir).filter(f => /\.(md|txt)$/i.test(f) && !SKIP_DOCS.test(f)).slice(0, 5);
               for (const f of files) {
                 try { docParts.push(`### docs/${f}\n${fs.readFileSync(path.join(docsDir, f), "utf8").slice(0, 2000)}`); } catch {}
               }

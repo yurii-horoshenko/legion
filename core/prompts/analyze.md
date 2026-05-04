@@ -17,7 +17,9 @@ Description: {{project_description}}
 
 {{covered_by_existing}}
 
-## Existing agents in this project
+## Currently active agents in this project
+
+IMPORTANT: Only the agents listed here are actually active. Agents mentioned in project documentation (docs/AGENTS.md, aifactory/, .claude/agents/) are from other systems — do not treat them as coverage.
 
 {{existing_agents}}
 
