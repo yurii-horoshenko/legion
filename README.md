@@ -1,77 +1,42 @@
 <p align="center">
-  <h1 align="center">⚔️ Legion</h1>
-  <p align="center"><strong>AI Agent Platform — local, zero-dependency, one command away</strong></p>
-  <p align="center">
-    <a href="#quick-start"><img src="https://img.shields.io/badge/quick_start-→-000000?style=flat-square&logoColor=white" alt="Quick Start"/></a>
-    <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen?style=flat-square&logo=node.js&logoColor=white" alt="Node.js"/>
-    <img src="https://img.shields.io/badge/dependencies-zero-blue?style=flat-square" alt="Zero Dependencies"/>
-    <img src="https://img.shields.io/badge/agents-174%2B-8b5cf6?style=flat-square" alt="174+ Agents"/>
-    <img src="https://img.shields.io/badge/license-MIT-gray?style=flat-square" alt="MIT License"/>
-    <img src="https://img.shields.io/badge/i18n-EN%20%2F%20RU-orange?style=flat-square" alt="EN/RU"/>
-  </p>
+  <img src="https://img.shields.io/badge/⚔️_LEGION-AI_Agent_Platform-000000?style=for-the-badge" alt="Legion"/>
 </p>
 
----
+<p align="center">
+  <img src="https://img.shields.io/badge/node-%3E%3D18-3c873a?style=flat-square&logo=node.js&logoColor=white"/>
+  <img src="https://img.shields.io/badge/dependencies-zero-0ea5e9?style=flat-square"/>
+  <img src="https://img.shields.io/badge/agents-174%2B-8b5cf6?style=flat-square"/>
+  <img src="https://img.shields.io/badge/providers-6-f59e0b?style=flat-square"/>
+  <img src="https://img.shields.io/badge/i18n-EN%20·%20RU-ec4899?style=flat-square"/>
+  <img src="https://img.shields.io/badge/license-MIT-6b7280?style=flat-square"/>
+</p>
 
-> **Legion** is a local operations platform for managing AI agent teams.  
-> It runs in your browser, stores everything on disk, and needs nothing but Node.js.
+<br/>
+
+**Legion** is a local platform for building and managing AI agent teams.  
+One command starts a web UI where you assemble agents, define pipelines, manage tasks and memories — all stored as plain files on disk, all running on your machine.
 
 ---
 
 ## Legion is right for you if
 
-✅ You want to manage a **team of AI agents** without setting up cloud infrastructure
+✅ You manage **multiple AI agents** across different projects and want one control plane
 
-✅ You run multiple projects and need **one place** to see all your agents, tasks, and memories
+✅ You mix providers — **Claude, GPT, Gemini, Mistral, Ollama** — and hate configuring each tool separately
 
-✅ You work across **Anthropic, OpenAI, Google, Mistral, Ollama** — and want to mix them freely
+✅ You have a **Claude Max subscription** and don't want to burn API credits on orchestration work
 
-✅ You have a **Claude Max subscription** and don't want to burn API credits for orchestration
+✅ You want **AI to analyze your codebase** and recommend which agents to add — not guess manually
 
-✅ You want **AI to recommend which agents** your project actually needs — based on your codebase and docs
+✅ You believe agents should have **explicit trigger chains**: who runs next, under what condition, in what order
 
-✅ You think agent workflows should have **explicit pipelines**: who triggers whom, under what conditions
+✅ You want agent **memory to live in plain markdown files** that your coding tools already read
 
-✅ You want agent **memories to sync bidirectionally** with markdown files your AI coding tools already read
-
-✅ You believe a local-first tool should have **zero runtime dependencies** and start instantly
+✅ You want something that starts in **one command** with nothing to install
 
 ---
 
-## What is Legion
-
-Legion is a control plane for AI agent teams. You create projects, assemble agents from a 174+ catalog, configure their models and providers, define pipelines, and manage tasks — all from a clean web UI that runs entirely on your machine.
-
-| Component | What it does |
-|-----------|-------------|
-| `bin/legion.js` | 🖥️ HTTP server — Node.js stdlib only, zero npm dependencies |
-| `core/agents/catalog/` | 📦 174+ agent definitions across 14 domains |
-| `core/config/` | 💾 File-based store — projects, agents, providers, models, keys |
-| `platforms/web/` | 🌐 Vanilla JS SPA — one HTML file, no framework |
-| `core/prompts/analyze.md` | 🤖 AI analysis prompt — recommends your agent team |
-
-Every agent lives at `<project>/.legion/agents/<id>/` — plain files your IDE and coding agents can read directly.
-
----
-
-## Features
-
-| Feature | What you get |
-|---------|-------------|
-| 🤖 **Agent catalog** | 174+ agents across Engineering, Game Dev, Design, Marketing, and 10 more domains |
-| 🧠 **AI-powered Analyze** | Point Legion at a project — it reads docs and recommends agents with context-aware reasoning |
-| 🔗 **Agent pipelines** | Define trigger chains: who runs after whom, sequential or parallel, on success or failure |
-| 💾 **Memory sync** | Bidirectional sync between the UI memory store and `MEMORY.md` on disk |
-| 🔌 **Multi-provider** | Anthropic · OpenAI · Google · Mistral · Ollama · Claude CLI (Max subscription) |
-| 📋 **10-tab agent detail** | Overview · Chat · Workers · Memories · Tasks · Skills · Tools · Channels · Cron · Config |
-| 📡 **SSE streaming** | Long-running AI calls stream progress live — with a Stop button |
-| 🌍 **EN / RU i18n** | Full localization, switchable in one click |
-| 🔒 **Keys stay local** | API keys stored in gitignored `.pkeys.json` / `.keys.json` — never leave your machine |
-| ⚡ **Zero dependencies** | One `node bin/legion.js` — nothing to install, nothing to configure |
-
----
-
-## Quick Start
+## Start Legion in one command
 
 ```bash
 git clone https://github.com/your-org/legion.git
@@ -79,112 +44,136 @@ cd legion
 npm start
 ```
 
-Opens `http://localhost:3000` automatically.
+Opens `http://localhost:3000`. No `npm install`. No build step. No Docker.
 
 ```bash
-npm run dev     # same, without auto-opening the browser
+npm run dev    # skip auto-opening the browser
 ```
-
-That's it. No build step, no `npm install`, no Docker.
 
 ---
 
-## Providers
+## What Legion manages
 
-Legion connects to your existing accounts — you bring the key, Legion stores it locally.
+| Concept | What it is |
+|---------|------------|
+| **Project** | A folder on disk with a `.legion/` directory inside |
+| **Agent** | An AI persona with a model, identity, memory, tasks, and channels |
+| **Pipeline** | A trigger chain — which agent fires after another, and under what condition |
+| **Catalog** | 174+ ready-to-use agent definitions across 14 domains |
+| **Provider** | An AI backend — Anthropic, OpenAI, Google, Mistral, Ollama, or Claude CLI |
+| **Analyze** | AI-powered scan of your project that recommends which agents to add |
 
-| Provider | Type | Notes |
+---
+
+## Six providers, one interface
+
+| Provider | Auth | Notes |
 |----------|------|-------|
-| **Anthropic** | API | Claude 3.5 / 3.7 / 4.x |
-| **OpenAI** | API | GPT-4o, o3, o4-mini |
-| **Google** | API | Gemini 2.x |
-| **Mistral** | API | Mistral Large / Medium |
-| **Ollama** | Local | No key needed — runs on your machine |
-| **Claude CLI** | Max subscription | No API credits — uses your `claude` CLI auth |
+| **Anthropic** | API key | Claude 3.5, 3.7, 4.x |
+| **OpenAI** | API key | GPT-4o, o3, o4-mini |
+| **Google** | API key | Gemini 2.x |
+| **Mistral** | API key | Mistral Large / Medium |
+| **Ollama** | None | Fully local, no internet required |
+| **Claude CLI** | Max subscription | Uses your local `claude` binary — no API billing |
 
-> **Using Claude Max?** Select the Claude CLI provider — Legion pipes prompts directly into your `claude` session. No API billing.
-
----
-
-## Agent Detail — 10 Tabs
-
-Every agent in Legion has a full detail view with 10 tabs:
-
-| Tab | What it does |
-|-----|-------------|
-| **Overview** | Description, capabilities, vibe — and a Remove button |
-| **Chat** | Inline conversation with the agent using its configured model |
-| **Workers** | Manage persistent background processes with status indicators |
-| **Memories** | Persistent / Temporary / Todo memory store, synced to `MEMORY.md` |
-| **Tasks** | Kanban board — Backlog → In Progress → Ready → Done |
-| **Skills** | Skill registry (runtime integration pending) |
-| **Tools** | Tool configuration (runtime integration pending) |
-| **Channels** | HTTP · Telegram · Discord · Webhook · MCP endpoints |
-| **Cron** | Scheduled jobs with cron expressions |
-| **Config** | Model selection + Markdown file editors (IDENTITY, SOUL, USER, AGENTS) |
+> Using a Claude Max subscription? Select **Claude CLI** as your provider. Legion pipes prompts through your existing `claude` session — no API credits consumed.
 
 ---
 
-## Agent Pipelines
+## Analyze: let AI build your agent team
 
-Define how agents chain together after task completion:
+Point Legion at any project. It reads your docs, scans your existing agents, and sends everything to your default model with the full catalog attached.
 
 ```
-Product Manager
-    └──[on_success]──▶ Software Architect
-                            └──[on_success, parallel]──▶ iOS Developer
-                            └──[on_success, parallel]──▶ Android Developer
-                            └──[on_success, parallel]──▶ Backend Developer
-                                        └──[on_success]──▶ QA Engineer
+✦ Analyzing…
+  Validating configuration…
+  Scanning project documentation… 4 files found
+  Loading agent catalog… 174 agents across 14 groups
+  Sending prompt to Claude Sonnet 4.6…
+  Done — 13 agents recommended, 9 pipelines suggested
+```
+
+Recommendations arrive as a live stream — with a **Stop** button if you want to cancel mid-run.
+
+Mandatory agents adapt to context. A game project gets PM + Architect + QA. A personal assistant project gets only what its domain actually needs.
+
+---
+
+## Pipelines: define what triggers what
+
+Every agent can have outgoing trigger rules. After a task completes, Legion knows who to notify next.
+
+```
+Product Manager ──[on_success]──▶ Software Architect
+                                        │
+                           ┌────────────┼────────────┐
+                    [parallel]     [parallel]    [parallel]
+                           ▼            ▼            ▼
+                     iOS Developer  Android Dev  Backend Dev
+                                                     │
+                                              [on_success]
+                                                     ▼
+                                               QA Engineer
 ```
 
 Each connection carries a condition (`always` / `on_success` / `on_failure`) and a mode (`sequential` / `parallel`).
 
 ---
 
-## AI Analyze
+## What each agent stores
 
-Point Legion at any project and it will:
-
-1. Read your `README.md`, `CLAUDE.md`, `package.json`, and `docs/`
-2. Scan your existing agent team
-3. Send everything to your default model with the full 174-agent catalog
-4. Stream back a structured recommendation — with tiered reasoning
-
-```
-✦ Analyzing…
-  → Validating configuration…
-  → Scanning project documentation… (3 files found)
-  → Loading agent catalog… (174 agents, 14 groups)
-  → Sending prompt to Claude Sonnet 4.6…
-  → Done — 12 agents recommended, 8 pipelines suggested
-```
-
-Mandatory agents are context-aware: a game project gets PM + Architect + QA. A personal assistant project gets only what it actually needs.
-
----
-
-## Project File Layout
+Every agent in a project gets its own directory:
 
 ```
 <your-project>/
 └── .legion/
-    ├── LEGION.md              ← project metadata
     └── agents/
-        └── <agent-id>/
-            ├── agent.md       ← id, model, added date
-            ├── AGENTS.md      ← instructions for AI coding tools
-            ├── IDENTITY.md    ← agent character and persona
+        └── senior-developer/
+            ├── AGENTS.md      ← instructions for AI coding tools (Claude Code, Cursor…)
+            ├── IDENTITY.md    ← persona and character
             ├── SOUL.md        ← values and principles
-            ├── USER.md        ← user and project context
+            ├── USER.md        ← project and user context
+            ├── MEMORY.md      ← long-term memories (synced bidirectionally with the UI)
             ├── tasks.json     ← kanban tasks
             ├── cron.json      ← scheduled jobs
-            ├── workers.json   ← worker records
-            ├── channels.json  ← channel configs
-            └── memories.json  ← long-term memory store
+            ├── workers.json   ← background workers
+            └── channels.json  ← HTTP, Telegram, Discord, MCP endpoints
 ```
 
-The `AGENTS.md` and `MEMORY.md` files are readable by Claude Code, Cursor, and any AI coding agent — Legion is the management layer, not the runtime.
+`AGENTS.md` and `MEMORY.md` are plain markdown — Claude Code, Cursor, and any AI coding tool reads them directly. Legion is the management layer.
+
+---
+
+## Agent detail — 10 tabs
+
+| Tab | What it does |
+|-----|-------------|
+| **Overview** | Description, capabilities, identity summary |
+| **Chat** | Inline conversation using the agent's configured model |
+| **Workers** | Persistent background processes with live status indicators |
+| **Memories** | Persistent / Temporary / Todo memory, synced to `MEMORY.md` on disk |
+| **Tasks** | Kanban board — Backlog → In Progress → Ready → Done |
+| **Skills** | Skill registry *(runtime integration in progress)* |
+| **Tools** | Tool configuration *(runtime integration in progress)* |
+| **Channels** | HTTP · Telegram · Discord · Webhook · MCP |
+| **Cron** | Scheduled jobs with cron expressions |
+| **Config** | Model selection and markdown file editors |
+
+---
+
+## 174+ agents across 14 domains
+
+Legion ships with the full [agency-agents](https://github.com/msitarzewski/agency-agents) catalog:
+
+| Domain | Example agents |
+|--------|---------------|
+| Engineering | Senior Developer, Software Architect, DevOps Automator, Security Engineer |
+| Game Development | Game Designer, Level Designer, Narrative Designer, Technical Artist |
+| Project Management | Product Manager, Senior Project Manager |
+| Testing | QA Engineer, Performance Benchmarker |
+| Design | UI/UX Designer, Brand Strategist |
+| Marketing | Content Strategist, SEO Specialist, Social Media Manager |
+| + 8 more | Finance, Sales, Support, Academic, and specialized roles |
 
 ---
 
@@ -192,73 +181,45 @@ The `AGENTS.md` and `MEMORY.md` files are readable by Claude Code, Cursor, and a
 
 ```
 legion/
-├── bin/legion.js              ← HTTP server (Node.js stdlib, zero deps)
+├── bin/legion.js              ← HTTP server — Node.js stdlib only, zero dependencies
 ├── core/
-│   ├── agents/catalog/        ← 174+ agents (.md files with frontmatter)
-│   ├── config/                ← projects, agents, providers, models
-│   └── prompts/analyze.md     ← AI analysis prompt template
+│   ├── agents/catalog/        ← 174+ agent .md files with YAML frontmatter
+│   ├── config/                ← projects, agents, providers, models (JSON on disk)
+│   └── prompts/analyze.md     ← AI analysis prompt — edit to change recommendation logic
 └── platforms/web/
-    ├── index.html             ← single HTML file
-    ├── js/app.js              ← full SPA (~2100 lines, vanilla JS)
-    ├── js/i18n.js             ← EN/RU localization
-    └── css/app.css            ← all styles (~2000 lines)
+    ├── index.html             ← single HTML file — the entire frontend
+    ├── js/app.js              ← full SPA, vanilla JS
+    ├── js/i18n.js             ← EN / RU localization
+    └── css/app.css            ← all styles
 ```
 
-The server is a single Node.js file. No Express, no Fastify, no build toolchain. The frontend is a single HTML file. No React, no Vue, no bundler.
+The server is a single file. The frontend is a single file. No framework, no bundler, no runtime dependencies.
 
----
-
-## FAQ
-
-### Do I need to install anything besides Node.js?
-
-No. `npm start` is the only command. There's no `npm install` because there are no dependencies.
-
-### Where are API keys stored?
-
-In `core/config/.pkeys.json` (provider keys) and `core/config/.keys.json` (model-specific keys). Both are gitignored and never leave your machine.
-
-### Can I use it with my Claude Max subscription?
-
-Yes. Add a Claude CLI provider — Legion will pipe prompts into your local `claude` binary using your existing Max auth. No API billing.
-
-### What's the agent catalog?
-
-174 agents from the [agency-agents](https://github.com/msitarzewski/agency-agents) collection, organized across 14 groups: Engineering, Game Development, Design, Marketing, Testing, Project Management, Finance, Sales, and more.
-
-### Does it work offline?
-
-The platform itself is fully local. AI calls obviously require connectivity to whatever provider you're using — except Ollama, which is fully offline.
-
-### Is there a native app or mobile client?
-
-Not yet. Web UI only for now. Native macOS and iOS clients are on the roadmap.
+Keys are stored in `core/config/.pkeys.json` and `core/config/.keys.json` — both gitignored, never leave your machine.
 
 ---
 
 ## Roadmap
 
-| Component | Status |
-|-----------|--------|
-| Web portal + file storage | ✅ Shipped |
-| 174+ agent catalog | ✅ Shipped |
-| Multi-provider AI (6 providers) | ✅ Shipped |
-| AI-powered project Analyze (SSE) | ✅ Shipped |
-| Agent pipelines | ✅ Shipped |
-| Bidirectional memory sync | ✅ Shipped |
-| Claude CLI / Max subscription | ✅ Shipped |
+| Feature | Status |
+|---------|--------|
+| Web portal + file-based storage | ✅ Done |
+| 174+ agent catalog | ✅ Done |
+| 6 AI providers incl. Claude CLI | ✅ Done |
+| AI-powered Analyze with SSE streaming | ✅ Done |
+| Agent pipelines | ✅ Done |
+| Bidirectional memory sync | ✅ Done |
+| EN / RU localization | ✅ Done |
 | Swift runtime core (Channel / Branch / Worker) | 🔲 Planned |
-| WebSocket live log | 🔲 Planned |
-| Skills tab (registry integration) | 🔲 Planned |
-| Real Chat (model connection) | 🔲 Planned |
-| Dashboard live activity feed | 🔲 Planned |
-| iOS / macOS native app | 🔲 Planned |
-| SQLite persistence | 🔲 Planned |
+| Real-time WebSocket activity feed | 🔲 Planned |
+| Skills registry integration | 🔲 Planned |
+| SQLite persistence layer | 🔲 Planned |
 | Vector memory (ChromaDB) | 🔲 Planned |
 | Telegram / Discord gateway | 🔲 Planned |
+| Native macOS / iOS app | 🔲 Planned |
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT
