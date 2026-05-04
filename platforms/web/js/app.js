@@ -1730,77 +1730,133 @@ async function runAnalyze() {
 
     if (!result) return;
 
-    addLog(`${result.agents?.length || 0} agents recommended, ${result.pipelines?.length || 0} pipelines suggested`, 'ok');
+    const agents    = result.agents    || [];
+    const pipelines = result.pipelines || [];
+    const newCount  = agents.filter(ag => !projectAgents().some(a => a.name.toLowerCase() === ag.name.toLowerCase())).length;
+    addLog(`${agents.length} agents recommended (${newCount} new), ${pipelines.length} pipelines suggested`, 'ok');
 
-    const existingNames = new Set(projectAgents().map(a => a.name.toLowerCase()));
+    const existingNames = () => new Set(projectAgents().map(a => a.name.toLowerCase()));
+
+    function agentCardHtml(ag, i) {
+      const exists = existingNames().has(ag.name.toLowerCase());
+      const tier   = ag.tier === 'mandatory' ? `<span class="analyze-tier mandatory">mandatory</span>` : `<span class="analyze-tier additional">additional</span>`;
+      return `
+        <div class="analyze-card" data-idx="${i}">
+          <div class="analyze-card-head">
+            <div class="analyze-card-name">${esc(ag.name)}</div>
+            ${exists
+              ? `<span class="analyze-exists">✓ exists</span>`
+              : `<button class="btn-analyze-add" data-idx="${i}">+ Add</button>`}
+          </div>
+          <div class="analyze-card-meta">
+            ${tier}
+            ${ag.id ? `<span class="analyze-card-id">${esc(ag.id)}</span>` : ''}
+          </div>
+          <div class="analyze-card-reason">${esc(ag.reason)}</div>
+        </div>`;
+    }
+
+    function pipeHtml(p, i) {
+      return `
+        <div class="analyze-pipe" data-idx="${i}">
+          <div class="analyze-pipe-flow">
+            <span class="analyze-pipe-agent">${esc(p.from)}</span>
+            <span class="analyze-pipe-arrow">→</span>
+            <span class="analyze-pipe-agent">${esc(p.to)}</span>
+          </div>
+          <div class="analyze-pipe-meta">
+            <span class="pipe-badge pipe-badge-cond">${esc(p.condition)}</span>
+            <span class="pipe-badge pipe-badge-mode">${esc(p.mode)}</span>
+          </div>
+          <div class="analyze-card-reason">${esc(p.reason)}</div>
+          <button class="btn-analyze-pipe" data-idx="${i}">Apply</button>
+        </div>`;
+    }
+
+    const half   = Math.ceil(agents.length / 2);
+    const col1   = agents.slice(0, half);
+    const col2   = agents.slice(half);
+
     const resultsEl = document.createElement('div');
     resultsEl.className = 'analyze-results';
     resultsEl.innerHTML = `
       ${result.analysis ? `<div class="analyze-summary">${esc(result.analysis)}</div>` : ''}
-      ${result.agents?.length ? `
-      <div class="analyze-section">
-        <div class="analyze-section-title">Recommended Agents</div>
-        <div class="analyze-cards">
-          ${result.agents.map((ag, i) => `
-            <div class="analyze-card" data-idx="${i}">
-              <div class="analyze-card-head">
-                <div class="analyze-card-name">${esc(ag.name)}</div>
-                ${!existingNames.has(ag.name.toLowerCase())
-                  ? `<button class="btn-analyze-add" data-idx="${i}">+ Add</button>`
-                  : `<span class="analyze-exists">✓ exists</span>`}
-              </div>
-              ${ag.id ? `<div class="analyze-card-id">${esc(ag.id)}</div>` : ''}
-              <div class="analyze-card-reason">${esc(ag.reason)}</div>
-            </div>`).join('')}
+      <div class="analyze-stats-bar">
+        <div class="analyze-stats-counts">
+          <span class="analyze-stat"><strong>${agents.length}</strong> agents recommended</span>
+          <span class="analyze-stat-sep">·</span>
+          <span class="analyze-stat"><strong>${newCount}</strong> new</span>
+          <span class="analyze-stat-sep">·</span>
+          <span class="analyze-stat"><strong>${pipelines.length}</strong> pipelines</span>
         </div>
-      </div>` : ''}
-      ${result.pipelines?.length ? `
-      <div class="analyze-section">
-        <div class="analyze-section-title">Suggested Pipelines</div>
-        <div class="analyze-pipes">
-          ${result.pipelines.map((p, i) => `
-            <div class="analyze-pipe" data-idx="${i}">
-              <div class="analyze-pipe-flow">
-                <span class="analyze-pipe-agent">${esc(p.from)}</span>
-                <span class="analyze-pipe-arrow">→</span>
-                <span class="analyze-pipe-agent">${esc(p.to)}</span>
-              </div>
-              <div class="analyze-pipe-meta">
-                <span class="pipe-badge pipe-badge-cond">${esc(p.condition)}</span>
-                <span class="pipe-badge pipe-badge-mode">${esc(p.mode)}</span>
-              </div>
-              <div class="analyze-card-reason">${esc(p.reason)}</div>
-              <button class="btn-analyze-pipe" data-idx="${i}">Apply</button>
-            </div>`).join('')}
+        ${newCount > 0 || pipelines.length > 0
+          ? `<button class="btn-analyze-all" id="btn-add-apply-all">⚡ Add & Apply All</button>`
+          : ''}
+      </div>
+      <div class="analyze-columns">
+        <div class="analyze-col">
+          ${col1.map((ag, i) => agentCardHtml(ag, i)).join('')}
         </div>
-      </div>` : ''}`;
+        <div class="analyze-col">
+          ${col2.map((ag, i) => agentCardHtml(ag, i + half)).join('')}
+        </div>
+        <div class="analyze-col analyze-col-pipes">
+          <div class="analyze-col-label">Pipelines</div>
+          ${pipelines.length
+            ? pipelines.map((p, i) => pipeHtml(p, i)).join('')
+            : `<div class="analyze-empty">No pipelines suggested</div>`}
+        </div>
+      </div>`;
     $('#analyze-body').appendChild(resultsEl);
 
-    resultsEl.querySelectorAll('.btn-analyze-add').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const ag = result.agents[+btn.dataset.idx];
-        btn.disabled = true; btn.textContent = 'Adding…';
-        const r = await fetch(`/api/projects/${S.projectId}/agents`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: ag.name, role: ag.reason, catalogId: ag.id || null, status: 'idle' }),
-        });
-        btn.textContent = r.ok ? '✓ Added' : '✗ Failed';
-        if (r.ok) { await loadProjectAgents(S.projectId); renderTree(); }
-        else btn.disabled = false;
+    async function addAgent(ag, btn) {
+      if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
+      const r = await fetch(`/api/projects/${S.projectId}/agents`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: ag.name, role: ag.reason, catalogId: ag.id || null, status: 'idle' }),
       });
+      if (btn) btn.textContent = r.ok ? '✓ Added' : '✗ Failed';
+      if (r.ok) { await loadProjectAgents(S.projectId); renderTree(); }
+      else if (btn) btn.disabled = false;
+      return r.ok;
+    }
+
+    async function applyPipe(p, btn) {
+      if (btn) { btn.disabled = true; btn.textContent = 'Applying…'; }
+      const fromAgent = projectAgents().find(a => a.name.toLowerCase() === p.from.toLowerCase());
+      const toAgent   = projectAgents().find(a => a.name.toLowerCase() === p.to.toLowerCase());
+      if (!fromAgent || !toAgent) { if (btn) btn.textContent = '✗ Not found'; return false; }
+      await storePost(fromAgent.id, 'pipeline', { targetAgentId: toAgent.id, condition: p.condition, mode: p.mode, event: 'task_complete' });
+      if (btn) btn.textContent = '✓ Applied';
+      return true;
+    }
+
+    resultsEl.querySelectorAll('.btn-analyze-add').forEach(btn => {
+      btn.addEventListener('click', () => addAgent(agents[+btn.dataset.idx], btn));
     });
 
     resultsEl.querySelectorAll('.btn-analyze-pipe').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const p = result.pipelines[+btn.dataset.idx];
-        btn.disabled = true; btn.textContent = 'Applying…';
-        const fromAgent = projectAgents().find(a => a.name.toLowerCase() === p.from.toLowerCase());
-        const toAgent   = projectAgents().find(a => a.name.toLowerCase() === p.to.toLowerCase());
-        if (!fromAgent || !toAgent) { btn.textContent = '✗ Agent not found'; return; }
-        await storePost(fromAgent.id, 'pipeline', { targetAgentId: toAgent.id, condition: p.condition, mode: p.mode, event: 'task_complete' });
-        btn.textContent = '✓ Applied';
-      });
+      btn.addEventListener('click', () => applyPipe(pipelines[+btn.dataset.idx], btn));
     });
+
+    const allBtn = resultsEl.querySelector('#btn-add-apply-all');
+    if (allBtn) {
+      allBtn.addEventListener('click', async () => {
+        allBtn.disabled = true;
+        allBtn.textContent = 'Adding agents…';
+        const toAdd = agents.filter(ag => !projectAgents().some(a => a.name.toLowerCase() === ag.name.toLowerCase()));
+        for (const ag of toAdd) {
+          const cardBtn = resultsEl.querySelector(`.btn-analyze-add[data-idx="${agents.indexOf(ag)}"]`);
+          await addAgent(ag, cardBtn);
+        }
+        allBtn.textContent = 'Applying pipelines…';
+        for (const p of pipelines) {
+          const pipeBtn = resultsEl.querySelector(`.btn-analyze-pipe[data-idx="${pipelines.indexOf(p)}"]`);
+          await applyPipe(p, pipeBtn);
+        }
+        allBtn.textContent = '✓ Done';
+      });
+    }
 
   } catch (err) {
     if (err.name === 'AbortError') {

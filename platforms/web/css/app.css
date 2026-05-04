@@ -2207,16 +2207,47 @@ html, body { height: 100%; overflow: hidden; font-family: var(--sans); font-size
   color: var(--text-2);
 }
 
-.analyze-section { display: flex; flex-direction: column; gap: 10px; }
-.analyze-section-title {
-  font-size: 11px; font-family: var(--mono);
-  letter-spacing: .1em; text-transform: uppercase;
-  color: var(--text-3);
+/* ── Analyze stats bar ── */
+.analyze-stats-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 12px 16px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 10px;
 }
+.analyze-stats-counts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.analyze-stat { font-size: 12px; color: var(--text-2); }
+.analyze-stat strong { color: var(--text); font-weight: 600; }
+.analyze-stat-sep { color: var(--text-3); }
 
-.analyze-cards { display: flex; flex-direction: column; gap: 8px; }
+.btn-analyze-all {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 14px; border-radius: 7px;
+  background: var(--accent); color: #fff;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  border: none; white-space: nowrap;
+  transition: opacity var(--t);
+}
+.btn-analyze-all:hover { opacity: .88; }
+.btn-analyze-all:disabled { opacity: .4; cursor: default; }
+
+/* ── Analyze 3-column grid ── */
+.analyze-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr 260px;
+  gap: 10px;
+  align-items: start;
+}
+.analyze-col { display: flex; flex-direction: column; gap: 8px; }
+.analyze-col-pipes { border-left: 1px solid var(--border); padding-left: 10px; }
+.analyze-col-label {
+  font-size: 10px; font-family: var(--mono); letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-3); margin-bottom: 2px;
+}
+.analyze-empty { font-size: 12px; color: var(--text-3); padding: 8px 0; }
+
+/* ── Agent card ── */
 .analyze-card {
-  padding: 14px 16px;
+  padding: 12px 14px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -2225,42 +2256,52 @@ html, body { height: 100%; overflow: hidden; font-family: var(--sans); font-size
 .analyze-card:hover { border-color: var(--border-2); }
 .analyze-card-head {
   display: flex; align-items: center;
-  justify-content: space-between; gap: 8px; margin-bottom: 4px;
+  justify-content: space-between; gap: 8px; margin-bottom: 5px;
 }
 .analyze-card-name { font-size: 13px; font-weight: 600; color: var(--text); }
-.analyze-card-id { font-size: 10px; font-family: var(--mono); color: var(--text-3); margin-bottom: 4px; }
+.analyze-card-meta { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; flex-wrap: wrap; }
+.analyze-card-id { font-size: 10px; font-family: var(--mono); color: var(--text-3); }
 .analyze-card-reason { font-size: 11px; color: var(--text-3); line-height: 1.5; }
 .analyze-exists { font-size: 11px; color: var(--ok); font-family: var(--mono); }
+
+.analyze-tier {
+  font-size: 9px; font-family: var(--mono); font-weight: 700;
+  letter-spacing: .06em; text-transform: uppercase;
+  padding: 2px 6px; border-radius: 4px;
+}
+.analyze-tier.mandatory { background: #fff4ec; color: var(--accent); border: 1px solid #ffd4bc; }
+.analyze-tier.additional { background: var(--bg-hover); color: var(--text-3); border: 1px solid var(--border); }
 
 .btn-analyze-add {
   padding: 4px 10px; border-radius: 5px; border: 1px solid var(--accent);
   background: var(--accent-dim); color: var(--accent);
   font-size: 11px; font-weight: 600; cursor: pointer;
   transition: background var(--t);
+  white-space: nowrap;
 }
 .btn-analyze-add:hover { background: var(--accent); color: #fff; }
 .btn-analyze-add:disabled { opacity: .4; cursor: default; }
 
-.analyze-pipes { display: flex; flex-direction: column; gap: 8px; }
+/* ── Pipeline card ── */
 .analyze-pipe {
-  padding: 12px 16px;
+  padding: 10px 12px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 10px;
-  display: flex; flex-direction: column; gap: 6px;
+  display: flex; flex-direction: column; gap: 5px;
   transition: border-color var(--t);
 }
 .analyze-pipe:hover { border-color: var(--border-2); }
-.analyze-pipe-flow { display: flex; align-items: center; gap: 8px; }
-.analyze-pipe-agent { font-size: 13px; font-weight: 500; color: var(--text); }
-.analyze-pipe-arrow { color: var(--accent); font-size: 14px; }
+.analyze-pipe-flow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.analyze-pipe-agent { font-size: 11px; font-weight: 600; color: var(--text); }
+.analyze-pipe-arrow { color: var(--accent); font-size: 12px; }
 .analyze-pipe-meta { display: flex; gap: 5px; }
 
 .btn-analyze-pipe {
   align-self: flex-start;
-  padding: 4px 10px; border-radius: 5px; border: 1px solid var(--border-2);
+  padding: 3px 9px; border-radius: 5px; border: 1px solid var(--border-2);
   background: var(--bg-hover); color: var(--text-2);
-  font-size: 11px; font-weight: 500; cursor: pointer;
+  font-size: 10px; font-weight: 500; cursor: pointer;
   transition: background var(--t), color var(--t);
 }
 .btn-analyze-pipe:hover { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
