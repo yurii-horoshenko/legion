@@ -14,5 +14,9 @@
     "node": ">=18"
   },
   "keywords": ["ai", "agents", "legion"],
+  "scripts": {
+    "start": "node bin/legion.js web",
+    "dev":   "node bin/legion.js web --no-open"
+  },
   "license": "MIT"
 }

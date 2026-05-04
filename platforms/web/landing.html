@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Legion — AI Agent Platform</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --ink:     #0C0A06;
+      --cream:   #F5F2EC;
+      --mid:     #E8E4DC;
+      --muted:   #9B9388;
+      --orange:  #FF4D00;
+      --orange2: #FF6B2B;
+      --mono:    'IBM Plex Mono', monospace;
+      --sans:    'Syne', system-ui, sans-serif;
+    }
+
+    html { scroll-behavior: smooth; }
+    body { font-family: var(--sans); background: var(--ink); color: var(--cream); overflow-x: hidden; }
+
+    /* ── HERO ── */
+    .hero {
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      padding: 0 48px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* grid texture */
+    .hero::before {
+      content: '';
+      position: absolute; inset: 0;
+      background-image:
+        linear-gradient(rgba(245,242,236,.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(245,242,236,.04) 1px, transparent 1px);
+      background-size: 48px 48px;
+      pointer-events: none;
+    }
+
+    /* warm glow */
+    .hero::after {
+      content: '';
+      position: absolute;
+      top: -20%; left: 50%; transform: translateX(-50%);
+      width: 900px; height: 600px;
+      background: radial-gradient(ellipse, rgba(255,77,0,.18) 0%, transparent 65%);
+      pointer-events: none;
+    }
+
+    .hero-nav {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 28px 0; position: relative; z-index: 2;
+    }
+
+    .nav-brand {
+      display: flex; align-items: center; gap: 10px; text-decoration: none;
+    }
+    .nav-mark {
+      width: 24px; height: 24px;
+      display: grid; grid-template-columns: 1fr 1fr; gap: 3px;
+    }
+    .nav-mark span {
+      border-radius: 2px; background: var(--cream); opacity: .9;
+    }
+    .nav-wordmark {
+      font-family: var(--sans); font-weight: 700; font-size: 15px;
+      letter-spacing: .04em; color: var(--cream);
+    }
+    .nav-ver {
+      font-family: var(--mono); font-size: 10px; color: var(--muted);
+      border: 1px solid rgba(245,242,236,.15); border-radius: 4px;
+      padding: 2px 6px;
+    }
+    .nav-link {
+      font-size: 13px; color: var(--muted); text-decoration: none; transition: color .15s;
+    }
+    .nav-link:hover { color: var(--cream); }
+
+    .hero-body {
+      flex: 1; display: flex; flex-direction: column;
+      justify-content: center; align-items: flex-start;
+      padding: 60px 0 80px; position: relative; z-index: 2;
+      max-width: 860px;
+    }
+
+    .hero-chip {
+      display: inline-flex; align-items: center; gap: 7px;
+      border: 1px solid rgba(255,77,0,.4); border-radius: 20px;
+      padding: 4px 12px; margin-bottom: 32px;
+      font-family: var(--mono); font-size: 11px; color: var(--orange2);
+    }
+    .hero-chip-dot {
+      width: 6px; height: 6px; border-radius: 50%; background: var(--orange);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: .3; }
+    }
+
+    .hero-title {
+      font-size: clamp(52px, 7vw, 96px);
+      font-weight: 800; line-height: .95;
+      letter-spacing: -.03em;
+      margin-bottom: 28px;
+    }
+    .hero-title em {
+      font-style: normal;
+      background: linear-gradient(120deg, var(--orange) 0%, var(--orange2) 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-sub {
+      font-size: 18px; font-weight: 400; color: rgba(245,242,236,.55);
+      line-height: 1.6; max-width: 540px; margin-bottom: 48px;
+    }
+
+    .hero-actions {
+      display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    }
+
+    .btn-primary {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 12px 24px; border-radius: 8px;
+      background: var(--orange); color: #fff;
+      font-family: var(--sans); font-weight: 600; font-size: 14px;
+      text-decoration: none; border: none; cursor: pointer;
+      transition: all .2s; position: relative; overflow: hidden;
+    }
+    .btn-primary::before {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(120deg, transparent 40%, rgba(255,255,255,.15));
+    }
+    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(255,77,0,.4); }
+
+    .btn-ghost {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 12px 24px; border-radius: 8px;
+      border: 1px solid rgba(245,242,236,.15); color: rgba(245,242,236,.7);
+      font-family: var(--sans); font-weight: 500; font-size: 14px;
+      text-decoration: none; transition: all .2s;
+    }
+    .btn-ghost:hover { border-color: rgba(245,242,236,.35); color: var(--cream); }
+
+    .term-wrap {
+      margin-top: 72px; position: relative; z-index: 2; width: 100%; max-width: 520px;
+    }
+    .term {
+      background: rgba(245,242,236,.04);
+      border: 1px solid rgba(245,242,236,.1);
+      border-radius: 10px; overflow: hidden;
+    }
+    .term-bar {
+      display: flex; align-items: center; gap: 6px;
+      padding: 10px 14px; border-bottom: 1px solid rgba(245,242,236,.07);
+    }
+    .term-dot { width: 10px; height: 10px; border-radius: 50%; }
+    .term-dot:nth-child(1) { background: #FF5F57; }
+    .term-dot:nth-child(2) { background: #FFBD2E; }
+    .term-dot:nth-child(3) { background: #28C840; }
+    .term-title {
+      flex: 1; text-align: center; font-family: var(--mono);
+      font-size: 11px; color: var(--muted);
+    }
+    .term-body { padding: 18px 20px; font-family: var(--mono); font-size: 13px; line-height: 1.9; }
+    .term-line { display: flex; gap: 10px; }
+    .term-prompt { color: var(--orange); user-select: none; }
+    .term-cmd { color: var(--cream); }
+    .term-out { color: var(--muted); padding-left: 18px; }
+    .term-url { color: #60D0FF; }
+    .term-cursor {
+      display: inline-block; width: 8px; height: 14px;
+      background: var(--orange); vertical-align: middle;
+      animation: blink .9s step-end infinite;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    /* ── FEATURES ── */
+    .features {
+      background: var(--cream); color: var(--ink);
+      padding: 100px 48px;
+    }
+
+    .section-label {
+      font-family: var(--mono); font-size: 11px; font-weight: 500;
+      letter-spacing: .12em; text-transform: uppercase;
+      color: var(--orange); margin-bottom: 16px;
+    }
+
+    .section-title {
+      font-size: clamp(32px, 4vw, 52px); font-weight: 800;
+      letter-spacing: -.025em; line-height: 1.05;
+      max-width: 640px; margin-bottom: 64px;
+      color: var(--ink);
+    }
+
+    .feat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 2px;
+    }
+
+    .feat-card {
+      background: var(--mid); padding: 36px 32px;
+      transition: background .2s;
+    }
+    .feat-card:first-child { border-radius: 12px 0 0 12px; }
+    .feat-card:last-child  { border-radius: 0 12px 12px 0; }
+    .feat-card:hover { background: #DDD9D0; }
+
+    .feat-icon {
+      font-size: 28px; margin-bottom: 20px; display: block;
+      line-height: 1;
+    }
+    .feat-title {
+      font-size: 17px; font-weight: 700; letter-spacing: -.01em;
+      margin-bottom: 10px; color: var(--ink);
+    }
+    .feat-desc { font-size: 14px; line-height: 1.65; color: #5A5550; font-weight: 400; }
+
+    /* ── HOW IT WORKS ── */
+    .how {
+      background: var(--ink); padding: 100px 48px;
+      position: relative; overflow: hidden;
+    }
+    .how::before {
+      content: '';
+      position: absolute; inset: 0;
+      background-image:
+        linear-gradient(rgba(245,242,236,.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(245,242,236,.03) 1px, transparent 1px);
+      background-size: 48px 48px;
+    }
+
+    .steps {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 0; position: relative; z-index: 1; max-width: 960px;
+    }
+
+    .step { padding: 40px 32px; position: relative; }
+    .step:not(:last-child)::after {
+      content: '→';
+      position: absolute; right: -12px; top: 50%;
+      transform: translateY(-50%);
+      font-size: 18px; color: rgba(245,242,236,.15);
+    }
+
+    .step-num {
+      font-family: var(--mono); font-size: 11px; color: var(--orange);
+      margin-bottom: 16px; letter-spacing: .08em;
+    }
+    .step-title {
+      font-size: 18px; font-weight: 700; margin-bottom: 10px;
+      letter-spacing: -.01em;
+    }
+    .step-desc { font-size: 13px; color: rgba(245,242,236,.45); line-height: 1.65; }
+
+    /* ── STATUS ── */
+    .status-section {
+      background: var(--cream); color: var(--ink);
+      padding: 80px 48px;
+    }
+
+    .status-grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 2px; max-width: 760px; margin-top: 48px;
+    }
+    @media (max-width: 640px) { .status-grid { grid-template-columns: 1fr; } }
+
+    .status-col { background: var(--mid); border-radius: 4px; padding: 28px; }
+    .status-col-title {
+      font-family: var(--mono); font-size: 11px; font-weight: 500;
+      letter-spacing: .1em; text-transform: uppercase;
+      margin-bottom: 18px;
+    }
+    .status-col-title.done  { color: #10B981; }
+    .status-col-title.planned { color: #F59E0B; }
+
+    .status-list { display: flex; flex-direction: column; gap: 10px; }
+    .status-item {
+      display: flex; align-items: flex-start; gap: 10px;
+      font-size: 13px; color: #4A4540; line-height: 1.4;
+    }
+    .status-item-dot {
+      width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; margin-top: 5px;
+    }
+    .done .status-item-dot   { background: #10B981; }
+    .planned .status-item-dot { background: #F59E0B; }
+
+    /* ── CTA ── */
+    .cta {
+      background: var(--ink); padding: 100px 48px;
+      text-align: center; position: relative; overflow: hidden;
+    }
+    .cta::after {
+      content: '';
+      position: absolute;
+      bottom: -30%; left: 50%; transform: translateX(-50%);
+      width: 700px; height: 400px;
+      background: radial-gradient(ellipse, rgba(255,77,0,.12) 0%, transparent 65%);
+      pointer-events: none;
+    }
+    .cta-inner { position: relative; z-index: 1; }
+    .cta-title {
+      font-size: clamp(36px, 5vw, 68px); font-weight: 800;
+      letter-spacing: -.03em; line-height: 1; margin-bottom: 24px;
+    }
+    .cta-sub {
+      font-size: 16px; color: rgba(245,242,236,.45); margin-bottom: 40px; font-weight: 400;
+    }
+    .cta-cmd {
+      display: inline-block; font-family: var(--mono); font-size: 15px;
+      background: rgba(245,242,236,.06); border: 1px solid rgba(245,242,236,.12);
+      border-radius: 8px; padding: 14px 24px; color: var(--orange2);
+      margin-bottom: 32px; letter-spacing: .02em;
+    }
+
+    /* ── FOOTER ── */
+    footer {
+      background: var(--ink); border-top: 1px solid rgba(245,242,236,.06);
+      padding: 24px 48px;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 12px;
+    }
+    .footer-brand { display: flex; align-items: center; gap: 8px; }
+    .footer-mark {
+      width: 16px; height: 16px;
+      display: grid; grid-template-columns: 1fr 1fr; gap: 2px;
+    }
+    .footer-mark span { border-radius: 1.5px; background: var(--muted); }
+    .footer-name { font-size: 13px; font-weight: 600; color: var(--muted); }
+    .footer-meta { font-family: var(--mono); font-size: 11px; color: rgba(245,242,236,.2); }
+    .footer-links { display: flex; gap: 20px; }
+    .footer-link { font-size: 12px; color: var(--muted); text-decoration: none; transition: color .15s; }
+    .footer-link:hover { color: var(--cream); }
+
+    @media (max-width: 768px) {
+      .hero, .features, .how, .status-section, .cta { padding-left: 24px; padding-right: 24px; }
+      footer { padding: 20px 24px; }
+      .feat-card:first-child, .feat-card:last-child { border-radius: 0; }
+      .step::after { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── HERO ── -->
+<section class="hero">
+  <nav class="hero-nav">
+    <a class="nav-brand" href="/">
+      <div class="nav-mark">
+        <span></span><span></span><span></span><span></span>
+      </div>
+      <span class="nav-wordmark">Legion</span>
+      <span class="nav-ver">v0.1.0</span>
+    </a>
+    <div style="display:flex;gap:24px;align-items:center">
+      <a class="nav-link" href="https://github.com/msitarzewski/agency-agents" target="_blank" rel="noopener">Catalog</a>
+      <a class="nav-link" href="/docs/overview.md" target="_blank">Docs</a>
+      <a class="btn-primary" href="/" style="padding:8px 18px;font-size:13px">Open App →</a>
+    </div>
+  </nav>
+
+  <div class="hero-body">
+    <div class="hero-chip">
+      <span class="hero-chip-dot"></span>
+      localhost · no cloud required
+    </div>
+
+    <h1 class="hero-title">
+      Your personal<br /><em>AI ops center.</em>
+    </h1>
+
+    <p class="hero-sub">
+      Legion runs locally, stores everything on disk, and gives you a
+      full web portal to manage AI agents across projects — without a subscription.
+    </p>
+
+    <div class="hero-actions">
+      <a class="btn-primary" href="/">Open App →</a>
+      <a class="btn-ghost" href="https://github.com/msitarzewski/agency-agents" target="_blank" rel="noopener">Browse Agent Catalog</a>
+    </div>
+
+    <div class="term-wrap">
+      <div class="term">
+        <div class="term-bar">
+          <span class="term-dot"></span>
+          <span class="term-dot"></span>
+          <span class="term-dot"></span>
+          <span class="term-title">terminal</span>
+        </div>
+        <div class="term-body">
+          <div class="term-line"><span class="term-prompt">$</span><span class="term-cmd">npm start</span></div>
+          <div class="term-out"></div>
+          <div class="term-out">  ┌─────────────────────────────────────┐</div>
+          <div class="term-out">  │  LEGION  Web Portal  v0.1.0         │</div>
+          <div class="term-out">  └─────────────────────────────────────┘</div>
+          <div class="term-out"></div>
+          <div class="term-out">  Local: <span class="term-url">http://localhost:3000</span></div>
+          <div class="term-out">  Stop:  Ctrl+C</div>
+          <div class="term-out"></div>
+          <div class="term-line"><span class="term-prompt">$</span><span class="term-cursor"></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── FEATURES ── -->
+<section class="features">
+  <p class="section-label">What it does</p>
+  <h2 class="section-title">Everything in one place, nothing in the cloud.</h2>
+
+  <div class="feat-grid">
+    <div class="feat-card">
+      <span class="feat-icon">⊞</span>
+      <div class="feat-title">Agent Catalog</div>
+      <p class="feat-desc">174+ agents from the agency-agents registry. Filter by category, search by name, add to any project in one click.</p>
+    </div>
+    <div class="feat-card">
+      <span class="feat-icon">⚙</span>
+      <div class="feat-title">Multi-provider Models</div>
+      <p class="feat-desc">Configure Anthropic, OpenAI, Google, Mistral, or Ollama. Keys stored locally, never in the cloud. Load available models directly from each API.</p>
+    </div>
+    <div class="feat-card">
+      <span class="feat-icon">◎</span>
+      <div class="feat-title">Per-agent Workspaces</div>
+      <p class="feat-desc">Every agent gets its own folder — tasks, memories, cron jobs, channels, and identity files, all in plain Markdown and JSON.</p>
+    </div>
+    <div class="feat-card">
+      <span class="feat-icon">⚡</span>
+      <div class="feat-title">Zero dependencies</div>
+      <p class="feat-desc">The server runs on Node.js stdlib — no Express, no database, no Docker. One file, one command, works on macOS and Linux.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ── HOW IT WORKS ── -->
+<section class="how">
+  <p class="section-label" style="position:relative;z-index:1">How it works</p>
+  <h2 class="section-title" style="position:relative;z-index:1;color:var(--cream);margin-bottom:56px">
+    Three steps from zero<br />to running agents.
+  </h2>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">01 — Setup</div>
+      <div class="step-title">Connect providers</div>
+      <p class="step-desc">Add your API keys for Anthropic, OpenAI, or point to a local Ollama instance. Load available models automatically.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">02 — Configure</div>
+      <div class="step-title">Create a project</div>
+      <p class="step-desc">Name it, link a folder on disk. Legion creates a <code style="font-family:var(--mono);font-size:11px;opacity:.6">.legion/</code> workspace — version-controllable, human-readable.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">03 — Manage</div>
+      <div class="step-title">Add agents</div>
+      <p class="step-desc">Pick from the catalog. Each agent gets identity files, task boards, memory logs, and cron scheduling — ready to edit.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ── STATUS ── -->
+<section class="status-section">
+  <p class="section-label">v0.1.0 — Current state</p>
+  <h2 class="section-title">Honest about what works.</h2>
+
+  <div class="status-grid">
+    <div class="status-col done">
+      <div class="status-col-title done">✓ Implemented</div>
+      <div class="status-list">
+        <div class="status-item"><span class="status-item-dot"></span>Web portal (vanilla JS, no framework)</div>
+        <div class="status-item"><span class="status-item-dot"></span>Project management + folder linking</div>
+        <div class="status-item"><span class="status-item-dot"></span>Agent catalog — 174+ agents, EN/RU</div>
+        <div class="status-item"><span class="status-item-dot"></span>Provider &amp; model configuration</div>
+        <div class="status-item"><span class="status-item-dot"></span>Per-agent: Tasks, Cron, Workers, Channels, Memories</div>
+        <div class="status-item"><span class="status-item-dot"></span>Agent identity files (AGENTS.md, SOUL.md…)</div>
+        <div class="status-item"><span class="status-item-dot"></span>File-based storage — all JSON + Markdown</div>
+      </div>
+    </div>
+    <div class="status-col planned">
+      <div class="status-col-title planned">◌ Planned</div>
+      <div class="status-list">
+        <div class="status-item"><span class="status-item-dot"></span>Swift runtime core (Channel / Branch / Worker)</div>
+        <div class="status-item"><span class="status-item-dot"></span>Real agent execution + live log</div>
+        <div class="status-item"><span class="status-item-dot"></span>Chat connected to models</div>
+        <div class="status-item"><span class="status-item-dot"></span>Skills &amp; Tools tabs</div>
+        <div class="status-item"><span class="status-item-dot"></span>Telegram / Discord gateways</div>
+        <div class="status-item"><span class="status-item-dot"></span>iOS / macOS native app</div>
+        <div class="status-item"><span class="status-item-dot"></span>Vector memory (ChromaDB)</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── CTA ── -->
+<section class="cta">
+  <div class="cta-inner">
+    <h2 class="cta-title">Start in 10 seconds.</h2>
+    <p class="cta-sub">No sign-up. No cloud. Your machine, your data.</p>
+    <div class="cta-cmd">npm start</div>
+    <br />
+    <a class="btn-primary" href="/" style="display:inline-flex">Open App →</a>
+  </div>
+</section>
+
+<!-- ── FOOTER ── -->
+<footer>
+  <div class="footer-brand">
+    <div class="footer-mark">
+      <span></span><span></span><span></span><span></span>
+    </div>
+    <span class="footer-name">Legion</span>
+    <span class="footer-meta" style="margin-left:8px">v0.1.0 · MIT License</span>
+  </div>
+  <div class="footer-links">
+    <a class="footer-link" href="https://github.com/msitarzewski/agency-agents" target="_blank" rel="noopener">Agent Catalog</a>
+    <a class="footer-link" href="/" >App</a>
+  </div>
+</footer>
+
+</body>
+</html>

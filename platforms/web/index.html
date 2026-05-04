@@ -65,6 +65,9 @@
   <!-- ── Rail (sidebar) ────────────────────────── -->
   <aside id="rail">
 
+    <div class="rail-proj-item" data-view="overview">Overview</div>
+    <div class="rail-proj-item" data-view="analyze">Analyze</div>
+
     <div class="rail-section-label" style="display:flex;align-items:center;justify-content:space-between;padding-right:10px">
       <span>Agents</span>
       <button class="rail-add-agent-btn" id="btn-add-agent">＋</button>
@@ -77,6 +80,9 @@
       </div>
       <div class="rail-nav-item" data-view="settings">
         <span class="rail-nav-icon">⚙</span> <span>Settings</span>
+      </div>
+      <div class="rail-nav-item" data-view="home">
+        <span class="rail-nav-icon">ℹ</span> <span>About</span>
       </div>
     </nav>
 
@@ -154,6 +160,10 @@
       </div>
 
       <div class="catalog-grid" id="catalog-grid"></div>
+
+      <div class="catalog-attribution">
+        Agent catalog sourced from <a href="https://github.com/msitarzewski/agency-agents" target="_blank" rel="noopener">agency-agents</a> by msitarzewski
+      </div>
     </div>
 
     <!-- Agent detail -->
@@ -172,16 +182,17 @@
       </div>
 
       <div class="agent-tabs-row">
-        <button class="a-tab on"  data-tab="overview"  data-i18n="tab_overview">Overview</button>
-        <button class="a-tab"     data-tab="chat"       data-i18n="tab_chat">Chat</button>
-        <button class="a-tab"     data-tab="workers"    data-i18n="tab_workers">Workers</button>
-        <button class="a-tab"     data-tab="memories"   data-i18n="tab_memories">Memories</button>
-        <button class="a-tab"     data-tab="tasks"      data-i18n="tab_tasks">Tasks</button>
-        <button class="a-tab"     data-tab="skills"     data-i18n="tab_skills">Skills</button>
-        <button class="a-tab"     data-tab="tools"      data-i18n="tab_tools">Tools</button>
-        <button class="a-tab"     data-tab="channels"   data-i18n="tab_channels">Channels</button>
-        <button class="a-tab"     data-tab="cron"       data-i18n="tab_cron">Cron</button>
-        <button class="a-tab"     data-tab="config"     data-i18n="tab_config">Config</button>
+        <button class="a-tab on"  data-tab="overview">Overview</button>
+        <button class="a-tab"     data-tab="chat">Chat</button>
+        <button class="a-tab"     data-tab="workers">Workers</button>
+        <button class="a-tab"     data-tab="memories">Memories</button>
+        <button class="a-tab"     data-tab="tasks">Tasks</button>
+        <button class="a-tab"     data-tab="pipeline">Pipeline</button>
+        <button class="a-tab"     data-tab="skills">Skills</button>
+        <button class="a-tab"     data-tab="tools">Tools</button>
+        <button class="a-tab"     data-tab="channels">Channels</button>
+        <button class="a-tab"     data-tab="cron">Cron</button>
+        <button class="a-tab"     data-tab="config">Config</button>
       </div>
 
       <div class="tab-body on" data-tab="overview"  id="tab-overview"></div>
@@ -189,20 +200,48 @@
       <div class="tab-body"    data-tab="workers"    id="tab-workers"></div>
       <div class="tab-body"    data-tab="memories"   id="tab-memories"></div>
       <div class="tab-body"    data-tab="tasks"      id="tab-tasks"></div>
+      <div class="tab-body"    data-tab="pipeline"   id="tab-pipeline"></div>
       <div class="tab-body"    data-tab="skills"     id="tab-skills">
-        <div class="tab-ph"><div class="tab-ph-icon">◈</div><div class="tab-ph-text" data-i18n="ph_skills">Skills appear once connected to Legion API</div></div>
+        <p class="tab-desc" data-i18n="tab_desc_skills">Installed skills and slash commands available to this agent.</p>
+        <div class="tab-ph"><div class="tab-ph-icon">◈</div><div class="tab-ph-text" data-i18n="ph_skills">Skills appear once connected to Legion API.</div></div>
       </div>
       <div class="tab-body"    data-tab="tools"      id="tab-tools">
-        <div class="tab-ph"><div class="tab-ph-icon">⚒</div><div class="tab-ph-text" data-i18n="ph_tools">Tools registered by this agent</div></div>
+        <p class="tab-desc" data-i18n="tab_desc_tools">External tools, MCP servers, and APIs registered for this agent.</p>
+        <div class="tab-ph"><div class="tab-ph-icon">⚒</div><div class="tab-ph-text" data-i18n="ph_tools">Tools registered by this agent will appear here.</div></div>
       </div>
-      <div class="tab-body"    data-tab="channels"   id="tab-channels">
-        <div class="tab-ph"><div class="tab-ph-icon">⇌</div><div class="tab-ph-text" data-i18n="ph_channels">Active channels: HTTP, Telegram, Discord</div></div>
-      </div>
-      <div class="tab-body"    data-tab="cron"       id="tab-cron">
-        <div class="tab-ph"><div class="tab-ph-icon">⏱</div><div class="tab-ph-text" data-i18n="ph_cron">Scheduled jobs for this agent</div></div>
-      </div>
+      <div class="tab-body"    data-tab="channels"   id="tab-channels"></div>
+      <div class="tab-body"    data-tab="cron"       id="tab-cron"></div>
       <div class="tab-body"    data-tab="config"     id="tab-config"></div>
 
+    </div>
+
+    <!-- Project Overview -->
+    <div id="view-overview">
+      <div class="dash-headline">
+        <div>
+          <div class="dash-title">Overview</div>
+          <div class="dash-meta">Project settings and folder configuration</div>
+        </div>
+      </div>
+      <div class="overview-form" id="overview-form"></div>
+    </div>
+
+    <!-- Analyze -->
+    <div id="view-analyze">
+      <div class="dash-headline">
+        <div>
+          <div class="dash-title">Analyze Project</div>
+          <div class="dash-meta" id="analyze-meta">AI-powered agent recommendations for this project</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn-analyze-run" id="btn-analyze-run">✦ Analyze</button>
+          <button class="btn-analyze-stop" id="btn-analyze-stop" style="display:none">◼ Stop</button>
+        </div>
+      </div>
+      <div id="analyze-no-model" class="analyze-notice" style="display:none">
+        No default model set. Go to <b>Settings → General</b> and choose a model.
+      </div>
+      <div id="analyze-body"></div>
     </div>
 
     <!-- Settings -->
@@ -210,65 +249,121 @@
       <div class="dash-headline">
         <div>
           <div class="dash-title">Settings</div>
-          <div class="dash-meta">Configure your Legion environment</div>
+          <div class="dash-meta">Providers and models configuration</div>
         </div>
       </div>
 
       <div class="settings-tabs">
-        <button class="s-tab on" data-stab="models">Models</button>
+        <button class="s-tab on" data-stab="general">General</button>
+        <button class="s-tab"    data-stab="providers">Providers</button>
+        <button class="s-tab"    data-stab="models">Models</button>
+      </div>
+
+      <!-- General tab -->
+      <div class="stab-body on" data-stab="general" id="stab-general">
+        <div class="cfg-section">
+          <div class="cfg-section-label">Default model for Legion operations</div>
+          <div class="cfg-model-row">
+            <select class="field-input cfg-model-select" id="general-default-model">
+              <option value="">— Select a model —</option>
+            </select>
+            <button class="btn-cfg-save" id="general-save">Save</button>
+          </div>
+          <div class="cfg-hint">Used for project analysis and other Legion AI features.</div>
+        </div>
+      </div>
+
+      <!-- Providers tab -->
+      <div class="stab-body" data-stab="providers">
+        <div class="providers-toolbar">
+          <button class="btn-add-provider" id="btn-add-provider">+ Add provider</button>
+        </div>
+        <div class="providers-list" id="providers-list"></div>
       </div>
 
       <!-- Models tab -->
-      <div class="stab-body on" data-stab="models">
-
+      <div class="stab-body" data-stab="models">
         <div class="models-toolbar">
           <button class="btn-add-model" id="btn-add-model">+ Add model</button>
         </div>
-
         <div class="models-list" id="models-list"></div>
-
       </div>
+    </div>
+
+    <!-- Home / Landing -->
+    <div id="view-home">
+      <iframe src="/home" id="home-iframe" title="About Legion"></iframe>
     </div>
 
   </main>
 </div>
 
-<!-- New project modal -->
+<!-- Provider modal -->
+<div class="overlay" id="provider-modal">
+  <div class="modal">
+    <div class="modal-title" id="pm-title">Add Provider</div>
+
+    <div class="field">
+      <label class="field-label">Type</label>
+      <div class="provider-pills" id="pm-types">
+        <button class="provider-pill on" data-provider="anthropic">Anthropic</button>
+        <button class="provider-pill" data-provider="openai">OpenAI</button>
+        <button class="provider-pill" data-provider="google">Google</button>
+        <button class="provider-pill" data-provider="mistral">Mistral</button>
+        <button class="provider-pill" data-provider="ollama">Ollama</button>
+        <button class="provider-pill" data-provider="claude-cli">Claude CLI</button>
+        <button class="provider-pill" data-provider="custom">Custom</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label class="field-label" for="pm-name">Display name</label>
+      <input class="field-input" id="pm-name" type="text" placeholder="e.g. My Anthropic Account" />
+    </div>
+
+    <div class="field" id="pm-field-key">
+      <label class="field-label" for="pm-key">API Key</label>
+      <input class="field-input field-mono" id="pm-key" type="password" placeholder="sk-..." autocomplete="off" />
+    </div>
+
+    <div class="field" id="pm-field-endpoint" style="display:none">
+      <label class="field-label" for="pm-endpoint">Endpoint URL</label>
+      <input class="field-input field-mono" id="pm-endpoint" type="text" placeholder="http://localhost:11434" />
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn-cancel" id="pm-cancel">Cancel</button>
+      <button class="btn-create" id="pm-save">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- Add / Edit model modal -->
 <div class="overlay" id="model-modal">
   <div class="modal">
     <div class="modal-title" id="mm-title">Add Model</div>
 
     <div class="field">
-      <label class="field-label">Provider</label>
-      <div class="provider-pills" id="mm-providers">
-        <button class="provider-pill on" data-provider="anthropic">Anthropic</button>
-        <button class="provider-pill" data-provider="openai">OpenAI</button>
-        <button class="provider-pill" data-provider="google">Google</button>
-        <button class="provider-pill" data-provider="mistral">Mistral</button>
-        <button class="provider-pill" data-provider="ollama">Ollama</button>
-        <button class="provider-pill" data-provider="custom">Custom</button>
+      <label class="field-label" for="mm-provider">Provider</label>
+      <select class="field-input" id="mm-provider"></select>
+    </div>
+
+    <div class="mm-fetch-row">
+      <button class="btn-fetch-models" id="mm-fetch-btn">↓ Load available models</button>
+      <span class="mm-fetch-status" id="mm-fetch-status"></span>
+    </div>
+
+    <div class="field">
+      <label class="field-label" for="mm-model-id">Model</label>
+      <div class="mm-model-row">
+        <select class="field-input" id="mm-model-select" style="display:none"></select>
+        <input class="field-input" id="mm-model-id" type="text" placeholder="e.g. claude-sonnet-4-6" />
       </div>
     </div>
 
     <div class="field">
       <label class="field-label" for="mm-name">Display name</label>
       <input class="field-input" id="mm-name" type="text" placeholder="e.g. Claude Sonnet 4.6" />
-    </div>
-
-    <div class="field">
-      <label class="field-label" for="mm-model-id">Model ID</label>
-      <input class="field-input" id="mm-model-id" type="text" placeholder="e.g. claude-sonnet-4-6" />
-    </div>
-
-    <div class="field" id="mm-field-key">
-      <label class="field-label" for="mm-key">API Key</label>
-      <input class="field-input field-mono" id="mm-key" type="password" placeholder="sk-..." autocomplete="off" />
-    </div>
-
-    <div class="field" id="mm-field-endpoint" style="display:none">
-      <label class="field-label" for="mm-endpoint">Endpoint URL</label>
-      <input class="field-input field-mono" id="mm-endpoint" type="text" placeholder="http://localhost:11434" />
     </div>
 
     <div class="field">
@@ -293,6 +388,13 @@
       <label class="field-label" for="m-desc" data-i18n="modal_desc_label">Description</label>
       <input class="field-input" id="m-desc" type="text" data-i18n-placeholder="modal_desc_placeholder" placeholder="Short description" />
     </div>
+    <div class="field">
+      <label class="field-label" for="m-path">Project folder <span style="opacity:.4;font-weight:400">(optional)</span></label>
+      <div class="path-field-wrap">
+        <input class="field-input field-mono" id="m-path" type="text" placeholder="/Users/you/projects/myapp" />
+        <button class="btn-browse" id="m-browse" title="Browse">⌂</button>
+      </div>
+    </div>
     <div class="modal-actions">
       <button class="btn-cancel" id="m-cancel" data-i18n="modal_cancel">Cancel</button>
       <button class="btn-create" id="m-create" data-i18n="modal_create">Create</button>
@@ -300,7 +402,7 @@
   </div>
 </div>
 
-<script src="js/i18n.js"></script>
-<script src="js/app.js"></script>
+<script src="js/i18n.js?v=2"></script>
+<script src="js/app.js?v=2"></script>
 </body>
 </html>
