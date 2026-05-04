@@ -933,23 +933,46 @@ function cmdWeb(args) {
           : "No documentation found.";
         progress(docParts.length ? `Read ${docParts.length} documentation file(s)` : "No documentation files found");
 
-        // ── Detect domain (server-side, no AI call) ──────────────────────────
-        const domainHint = detectDomain((project.description || '') + ' ' + docParts.slice(0, 2).join(' '));
-        progress(`Domain detected: ${domainHint}`);
-
-        // ── Load & filter catalog ────────────────────────────────────────────
-        progress("Loading agent catalog…");
+        // ── Load catalog (needed for both empty and normal paths) ─────────────
         const catalogFile   = path.join(webRoot, "data", "agents-catalog.json");
         const catalogAgents = fs.existsSync(catalogFile)
           ? (() => { try { return JSON.parse(fs.readFileSync(catalogFile, "utf8")); } catch { return []; } })()
           : [];
+
+        // ── Exclude already-installed agents (by catalogId AND name) ──────────
         const existingIds   = new Set(existingList.map(a => a.catalogId).filter(Boolean));
+        const existingNames = new Set(existingList.map(a => a.name.toLowerCase()));
+        const notInstalled  = a => !existingIds.has(a.id) && !existingNames.has(a.name.toLowerCase());
+
+        // ── SHORTCUT: no docs and no description → suggest Technical Writer ───
+        const hasDesc = (project.description || '').trim().length > 20;
+        if (!docParts.length && !hasDesc) {
+          progress("No documentation found — suggesting a documentation agent first");
+          const writer = catalogAgents.find(a => a.id === 'technical-writer') || catalogAgents.find(a => /technical.writer/i.test(a.name));
+          const result = {
+            analysis: `No documentation was found for "${project.name}". Before selecting a full agent team, start with a Technical Writer to create project documentation (README, architecture overview, requirements). Once documentation exists, re-run Analyze to get a complete, accurate team recommendation.`,
+            agents: writer ? [{
+              id: writer.id,
+              name: writer.name,
+              tier: "mandatory",
+              covers: "Project documentation",
+              reason: "No project documentation exists. A Technical Writer will create README, architecture docs, and requirements — enabling a proper analysis on the next run."
+            }] : [],
+            pipelines: [],
+          };
+          progress(`Done — suggested 1 agent (re-run Analyze after documentation is created)`);
+          return done(result);
+        }
+
+        // ── Detect domain (server-side, no AI call) ──────────────────────────
+        const domainHint = detectDomain((project.description || '') + ' ' + docParts.slice(0, 2).join(' '));
+        progress(`Domain detected: ${domainHint}`);
+
+        // ── Filter catalog by domain + exclude installed ──────────────────────
+        progress("Loading agent catalog…");
         const allowedGroups = DOMAIN_GROUPS[domainHint];
-        const available     = catalogAgents.filter(a =>
-          !existingIds.has(a.id) && (!allowedGroups || allowedGroups.has(a.group))
-        );
-        // Build rich catalog text: id | group | name | capabilities | description
-        const catalogText = available.map(a => {
+        const available     = catalogAgents.filter(a => notInstalled(a) && (!allowedGroups || allowedGroups.has(a.group)));
+        const catalogText   = available.map(a => {
           const caps = a.capabilities?.length ? ` | capabilities: ${a.capabilities.join(', ')}` : '';
           return `- id: "${a.id}" | group: ${a.group} | name: ${a.name}${caps} | ${a.description}`;
         }).join("\n");
@@ -967,20 +990,23 @@ function cmdWeb(args) {
           .replace("{{project_docs}}",        projectDocs)
           .replace("{{existing_agents}}",     existingAgents);
 
-        const pass1Raw  = await callAI(model, provider, pass1Prompt);
+        const pass1Raw = await callAI(model, provider, pass1Prompt);
         if (aborted) return;
-        const pass1     = parseJson(pass1Raw);
+        const pass1    = parseJson(pass1Raw);
         const funcAreas = (pass1.functional_areas || []).join("\n- ");
         const covered   = (pass1.covered_by_existing || []).join("\n- ") || "Nothing yet";
         progress(`Found ${pass1.functional_areas?.length || 0} functional areas: ${(pass1.functional_areas || []).slice(0, 3).join(', ')}…`);
 
         // ── PASS 2: match agents to requirements ─────────────────────────────
         progress("Pass 2 — Matching agents to requirements…");
+        const installedNote = existingList.length
+          ? `\n\nDo NOT recommend any of these already-installed agents: ${existingList.map(a => a.name).join(', ')}.`
+          : '';
         const pass2File = path.resolve(webRoot, "../../core/prompts/analyze.md");
         const pass2Tpl  = fs.existsSync(pass2File) ? fs.readFileSync(pass2File, "utf8") : "";
         const pass2Prompt = pass2Tpl
           .replace("{{project_name}}",        project.name)
-          .replace("{{project_description}}", project.description || "No description")
+          .replace("{{project_description}}", (project.description || "No description") + installedNote)
           .replace("{{tech_stack}}",          (pass1.tech_stack || []).join(', ') || "Unknown")
           .replace("{{functional_areas}}",    funcAreas ? `- ${funcAreas}` : "No specific areas identified")
           .replace("{{covered_by_existing}}", covered)
@@ -992,6 +1018,10 @@ function cmdWeb(args) {
 
         progress("Parsing response…");
         const result = parseJson(pass2Raw);
+        // Final safety: strip any agents that are already installed
+        if (result.agents) {
+          result.agents = result.agents.filter(a => !existingNames.has(a.name.toLowerCase()) && !existingIds.has(a.id));
+        }
         progress(`Done — ${result.agents?.length || 0} agents recommended, ${result.pipelines?.length || 0} pipelines suggested`);
         done(result);
 
