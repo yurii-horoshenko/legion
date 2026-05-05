@@ -89,7 +89,8 @@ export async function renderSkills(a) {
         installedEl.querySelectorAll('.sk-pill-remove').forEach(btn => {
           btn.addEventListener('click', async () => {
             btn.textContent = '…'; btn.disabled = true;
-            await fetch(`/api/projects/${S.projectId}/agents/${a.id}/skills/${btn.dataset.skill}`, { method: 'DELETE' });
+            const res = await fetch(`/api/projects/${S.projectId}/agents/${a.id}/skills/${btn.dataset.skill}`, { method: 'DELETE' });
+            if (res.ok) { const d = await res.json(); a.skills = d.skills; }
             refreshSkillLists();
           });
         });
@@ -114,7 +115,8 @@ export async function renderSkills(a) {
         availableEl.querySelectorAll('.sk-avail-add').forEach(btn => {
           btn.addEventListener('click', async () => {
             btn.textContent = '…'; btn.disabled = true;
-            await fetch(`/api/projects/${S.projectId}/agents/${a.id}/skills/${btn.dataset.skill}`, { method: 'POST' });
+            const res = await fetch(`/api/projects/${S.projectId}/agents/${a.id}/skills/${btn.dataset.skill}`, { method: 'POST' });
+            if (res.ok) { const d = await res.json(); a.skills = d.skills; }
             await refreshSkillLists();
           });
         });
@@ -205,7 +207,7 @@ export async function renderSkills(a) {
           assignBtn.addEventListener('click', async () => {
             assignBtn.textContent = '…'; assignBtn.disabled = true;
             const res = await fetch(`/api/projects/${S.projectId}/agents/${a.id}/skills/${assignBtn.dataset.skill}`, { method: 'POST' });
-            if (res.ok) { assignBtn.textContent = '✓'; refreshSkillLists(); }
+            if (res.ok) { const d = await res.json(); a.skills = d.skills; assignBtn.textContent = '✓'; refreshSkillLists(); }
             else { assignBtn.textContent = '✗'; assignBtn.disabled = false; }
           });
         });
@@ -214,9 +216,11 @@ export async function renderSkills(a) {
           const allBtn = $('#sk-assign-all');
           allBtn.textContent = '…'; allBtn.disabled = true;
           results.querySelectorAll('.sk-card-assign').forEach(b => { b.disabled = true; });
-          await Promise.all(r.skills.map(s =>
+          const responses = await Promise.all(r.skills.map(s =>
             fetch(`/api/projects/${S.projectId}/agents/${a.id}/skills/${s.name}`, { method: 'POST' })
           ));
+          const last = responses.findLast(r => r.ok);
+          if (last) { const d = await last.json(); a.skills = d.skills; }
           results.querySelectorAll('.sk-card-assign').forEach(b => { b.textContent = '✓'; });
           allBtn.textContent = '✓ All assigned';
           refreshSkillLists();
