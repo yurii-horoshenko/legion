@@ -200,47 +200,92 @@ export async function renderProjectTasks(src) {
   }
 }
 
-// ── Task detail modal ──────────────────────────────────────────────────────
+// ── Markdown renderer (safe: escapes HTML before applying patterns) ────────
 
-function closeTaskDetail() {
-  document.getElementById('task-detail-overlay')?.remove();
+function renderMd(text) {
+  const e = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const inline = s => e(s)
+    .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/`([^`]+)`/g, '<code class="td-inline-code">$1</code>');
+
+  const lines = text.split('\n');
+  let html = '', inList = false, inOl = false;
+
+  const closeList = () => {
+    if (inList)  { html += '</ul>'; inList = false; }
+    if (inOl)    { html += '</ol>'; inOl   = false; }
+  };
+
+  for (const line of lines) {
+    const t = line.trim();
+
+    const hm = t.match(/^(#{1,4})\s+(.+)/);
+    if (hm) { closeList(); html += `<h${hm[1].length} class="td-md-h${hm[1].length}">${inline(hm[2])}</h${hm[1].length}>`; continue; }
+
+    const cm = t.match(/^-\s+\[([ xX])\]\s+(.*)/);
+    if (cm) {
+      if (!inList) { closeList(); html += '<ul class="td-md-checklist">'; inList = true; }
+      const done = cm[1] !== ' ';
+      html += `<li class="td-md-check${done?' td-check-done':''}"><span class="td-checkbox">${done?'☑':'☐'}</span>${inline(cm[2])}</li>`;
+      continue;
+    }
+
+    const lm = t.match(/^[-*]\s+(.*)/);
+    if (lm) {
+      if (!inList) { closeList(); html += '<ul class="td-md-list">'; inList = true; }
+      html += `<li>${inline(lm[1])}</li>`; continue;
+    }
+
+    const om = t.match(/^\d+\.\s+(.*)/);
+    if (om) {
+      if (!inOl) { closeList(); html += '<ol class="td-md-list">'; inOl = true; }
+      html += `<li>${inline(om[1])}</li>`; continue;
+    }
+
+    const hr = t.match(/^---+$/);
+    if (hr) { closeList(); html += '<hr class="td-md-hr">'; continue; }
+
+    if (!t) { closeList(); html += '<div class="td-md-gap"></div>'; continue; }
+
+    closeList();
+    html += `<p class="td-md-p">${inline(t)}</p>`;
+  }
+  closeList();
+  return html;
 }
 
+// ── Task detail page (inline, replaces task list) ──────────────────────────
+
 function showTaskDetail(task) {
-  closeTaskDetail();
-  const overlay = document.createElement('div');
-  overlay.className = 'overlay on';
-  overlay.id = 'task-detail-overlay';
-  overlay.innerHTML = `
-    <div class="modal td-modal">
-      <div class="td-head">
-        <div class="td-meta">
+  const body = $('#tasks-body');
+  if (!body) return;
+  body.innerHTML = `
+    <div class="td-page">
+      <div class="td-page-nav">
+        <button class="td-back" id="btn-td-back">← Back</button>
+        <div class="td-page-badges">
           <span class="tasks-group-dot tasks-dot-${esc(task.status || 'backlog')}"></span>
-          <span class="td-status">${esc(task.status || 'backlog')}</span>
+          <span class="td-page-status">${esc(task.status || 'backlog')}</span>
           ${task.priority ? `<span class="tasks-row-pri tasks-pri-${esc(task.priority)}">${esc(task.priority)}</span>` : ''}
+          ${task.agentName ? `<span class="td-page-agent">${esc(task.agentEmoji || '🤖')} ${esc(task.agentName)}</span>` : ''}
         </div>
-        <button class="td-close" id="btn-close-td">✕</button>
       </div>
-      <div class="td-title">${esc(task.title || 'Untitled')}</div>
-      ${task.description
-        ? `<div class="td-desc">${esc(task.description)}</div>`
-        : `<div class="td-no-desc">No description</div>`}
-      <div class="td-fields">
-        ${task.agentName ? `<div class="td-field"><span class="td-field-lbl">Agent</span><span>${esc(task.agentEmoji || '🤖')} ${esc(task.agentName)}</span></div>` : ''}
-        ${task.createdAt ? `<div class="td-field"><span class="td-field-lbl">Created</span><span>${new Date(task.createdAt).toLocaleDateString()}</span></div>` : ''}
-        ${task.swarmId  ? `<div class="td-field"><span class="td-field-lbl">Swarm</span><span>⚡ ${esc(task.swarmId)}</span></div>` : ''}
+      <h1 class="td-page-title">${esc(task.title || 'Untitled')}</h1>
+      ${task.createdAt ? `<div class="td-page-date">${new Date(task.createdAt).toLocaleDateString()}</div>` : ''}
+      <div class="td-page-content">
+        ${task.description ? renderMd(task.description) : '<p class="td-no-desc">No description</p>'}
       </div>
+      ${task.swarmId ? `<div class="td-page-meta-row">⚡ Swarm: ${esc(task.swarmId)}</div>` : ''}
       ${task.agentId ? `
-        <div class="td-footer">
+        <div class="td-page-footer">
           <button class="btn-cfg-save" id="btn-td-open">Open in agent →</button>
         </div>` : ''}
     </div>`;
-  document.body.appendChild(overlay);
 
-  overlay.querySelector('#btn-close-td').addEventListener('click', closeTaskDetail);
-  overlay.addEventListener('click', e => { if (e.target === overlay) closeTaskDetail(); });
-  overlay.querySelector('#btn-td-open')?.addEventListener('click', () => {
-    closeTaskDetail();
+  body.querySelector('#btn-td-back').addEventListener('click', () => renderProjectTasks(_currentTaskSrc));
+  body.querySelector('#btn-td-open')?.addEventListener('click', () => {
     S.agentId = task.agentId;
     renderTree();
     import('./agent-panel.js').then(({ selectAgent }) => {
@@ -251,40 +296,37 @@ function showTaskDetail(task) {
 }
 
 function showLinearDetail(issue) {
-  closeTaskDetail();
-  const overlay = document.createElement('div');
-  overlay.className = 'overlay on';
-  overlay.id = 'task-detail-overlay';
-  overlay.innerHTML = `
-    <div class="modal td-modal">
-      <div class="td-head">
-        <div class="td-meta">
+  const body = $('#tasks-body');
+  if (!body) return;
+  const labels = (issue.labels?.nodes || []).map(l => `<span class="td-label-chip">${esc(l.name)}</span>`).join('');
+  body.innerHTML = `
+    <div class="td-page">
+      <div class="td-page-nav">
+        <button class="td-back" id="btn-td-back">← Back</button>
+        <div class="td-page-badges">
           <span class="tasks-row-id">${esc(issue.identifier || '')}</span>
           <span class="tasks-group-dot" style="background:${esc(issue.state?.color || '#888')}"></span>
-          <span class="td-status">${esc(issue.state?.name || '')}</span>
+          <span class="td-page-status">${esc(issue.state?.name || '')}</span>
           ${issue.priorityLabel ? `<span class="tasks-row-pri">${esc(issue.priorityLabel)}</span>` : ''}
         </div>
-        <button class="td-close" id="btn-close-td">✕</button>
       </div>
-      <div class="td-title">${esc(issue.title || 'Untitled')}</div>
-      ${issue.description
-        ? `<div class="td-desc">${esc(issue.description)}</div>`
-        : `<div class="td-no-desc">No description</div>`}
-      <div class="td-fields">
-        ${issue.team?.name ? `<div class="td-field"><span class="td-field-lbl">Team</span><span>${esc(issue.team.name)}</span></div>` : ''}
-        ${issue.assignee?.name ? `<div class="td-field"><span class="td-field-lbl">Assignee</span><span>${esc(issue.assignee.name)}</span></div>` : ''}
-        ${issue.createdAt ? `<div class="td-field"><span class="td-field-lbl">Created</span><span>${new Date(issue.createdAt).toLocaleDateString()}</span></div>` : ''}
-        ${(issue.labels?.nodes?.length) ? `<div class="td-field"><span class="td-field-lbl">Labels</span><span>${issue.labels.nodes.map(l => esc(l.name)).join(', ')}</span></div>` : ''}
+      <h1 class="td-page-title">${esc(issue.title || 'Untitled')}</h1>
+      <div class="td-page-date">
+        ${issue.team?.name ? `${esc(issue.team.name)}` : ''}
+        ${issue.createdAt ? ` · ${new Date(issue.createdAt).toLocaleDateString()}` : ''}
+        ${issue.assignee?.name ? ` · ${esc(issue.assignee.name)}` : ''}
+      </div>
+      ${labels ? `<div class="td-labels-row">${labels}</div>` : ''}
+      <div class="td-page-content">
+        ${issue.description ? renderMd(issue.description) : '<p class="td-no-desc">No description</p>'}
       </div>
       ${issue.url ? `
-        <div class="td-footer">
+        <div class="td-page-footer">
           <a class="btn-cfg-save" href="${esc(issue.url)}" target="_blank" rel="noopener">Open in Linear ↗</a>
         </div>` : ''}
     </div>`;
-  document.body.appendChild(overlay);
 
-  overlay.querySelector('#btn-close-td').addEventListener('click', closeTaskDetail);
-  overlay.addEventListener('click', e => { if (e.target === overlay) closeTaskDetail(); });
+  body.querySelector('#btn-td-back').addEventListener('click', () => renderProjectTasks(_currentTaskSrc));
 }
 
 // ── Linear connection helpers ───────────────────────────────────────────────
