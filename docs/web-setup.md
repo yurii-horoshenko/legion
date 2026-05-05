@@ -102,16 +102,14 @@ All modules use Node.js stdlib only — no `npm install` ever needed.
 
 ## Config file locations
 
-All config is stored in `core/config/` inside the Legion repo:
+All config is stored in `.config/` at the Legion repo root — **fully gitignored**.  
+To reset all settings, delete this folder and restart.
 
 | File | Contents |
 |------|----------|
-| `projects.json` | List of all projects |
-| `agents/{pid}.json` | Agents for project `pid` (one file per project) |
-| `providers.json` | Provider definitions (no keys) |
-| `models.json` | Model definitions (no keys) |
-| `.pkeys.json` | Provider API keys — **gitignored** |
-| `.keys.json` | Model API keys — **gitignored** |
+| `legion.db` | SQLite database — projects, agents, providers, models, tasks, memories… |
+| `.pkeys.json` | Provider API keys |
+| `.keys.json` | Model API keys |
 
 Keys never leave your machine.
 

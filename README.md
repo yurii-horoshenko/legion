@@ -202,10 +202,10 @@ legion/
 │   └── monitoring.js      ← /api/projects/:pid/visor, tasks, pipelines
 ├── core/
 │   ├── agents/catalog/    ← 174+ agent .md files with YAML frontmatter
-│   ├── config/
-│   │   ├── legion.db      ← SQLite database (all structured data, gitignored)
-│   │   ├── .pkeys.json    ← provider API keys (gitignored)
-│   │   └── .keys.json     ← model API keys (gitignored)
+├── .config/               ← all user data, fully gitignored — delete to reset
+│   ├── legion.db          ← SQLite database (projects, agents, tasks, memories…)
+│   ├── .pkeys.json        ← provider API keys
+│   └── .keys.json         ← model API keys
 │   └── prompts/           ← AI analysis prompts — edit to change recommendation logic
 └── platforms/web/
     ├── index.html

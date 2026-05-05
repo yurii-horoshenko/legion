@@ -18,7 +18,7 @@ const MIME = {
 };
 
 module.exports = function startServer({ port, doOpen, webRoot }) {
-  const configDir     = path.resolve(webRoot, "../../core/config");
+  const configDir     = path.resolve(webRoot, "../../.config");
   const agentsBaseDir = path.resolve(webRoot, "../../core/agents");
 
   const httpLib  = require("../lib/http");
