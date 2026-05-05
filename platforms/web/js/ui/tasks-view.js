@@ -624,12 +624,33 @@ async function applyAssignments(issues, integ, overlay) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: lName, color: agent.color || '#94A3B8', teamId, agentId }),
         });
-        if (!cr.ok) { const e = await cr.json(); log(`✗ Failed to create label: ${e.error}`, 'assign-log-err'); continue; }
-        const newLabel = await cr.json();
-        labelEntry = { agentId, labelId: newLabel.id, labelName: newLabel.name };
-        agentLabelsCurrent.push(labelEntry);
-        allAgentLabelIds.push(newLabel.id);
-        setIntegCache({ ...integ, agentLabels: agentLabelsCurrent });
+        if (!cr.ok) {
+          const e = await cr.json();
+          if (/duplicate/i.test(e.error || '')) {
+            // Label already exists in Linear — fetch all labels and find it by name
+            log(`Label "${lName}" already exists, looking it up…`);
+            const lr = await fetch(`/api/projects/${S.projectId}/linear/labels${teamId ? `?teamId=${teamId}` : ''}`);
+            if (lr.ok) {
+              const allLabels = await lr.json();
+              const existing = allLabels.find(l => l.name.toLowerCase() === lName.toLowerCase());
+              if (existing) {
+                labelEntry = { agentId, labelId: existing.id, labelName: existing.name };
+                agentLabelsCurrent.push(labelEntry);
+                allAgentLabelIds.push(existing.id);
+                setIntegCache({ ...integ, agentLabels: agentLabelsCurrent });
+              }
+            }
+            if (!labelEntry) { log(`✗ Could not resolve label "${lName}"`, 'assign-log-err'); continue; }
+          } else {
+            log(`✗ Failed to create label: ${e.error}`, 'assign-log-err'); continue;
+          }
+        } else {
+          const newLabel = await cr.json();
+          labelEntry = { agentId, labelId: newLabel.id, labelName: newLabel.name };
+          agentLabelsCurrent.push(labelEntry);
+          allAgentLabelIds.push(newLabel.id);
+          setIntegCache({ ...integ, agentLabels: agentLabelsCurrent });
+        }
       }
 
       const issue = issues.find(i => i.id === issueId);
