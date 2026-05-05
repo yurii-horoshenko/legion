@@ -297,7 +297,7 @@
 
 .assign-modal {
   width: min(860px, 96vw);
-  max-height: 85vh;
+  height: min(82vh, 680px);
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -350,6 +350,8 @@
   padding: 8px 20px;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
+  height: 130px;
+  overflow-y: auto;
   flex-shrink: 0;
 }
 
@@ -365,6 +367,7 @@
 .assign-table-wrap {
   overflow-y: auto;
   flex: 1;
+  min-height: 0;
   padding: 0;
 }
 
