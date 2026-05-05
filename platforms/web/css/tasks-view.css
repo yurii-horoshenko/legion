@@ -3,11 +3,13 @@
 /* ── Tasks view ──────────────────────────────────────────────────────────── */
 
 #view-tasks {
+  display: none;
   padding: 24px 28px;
   overflow-y: auto;
-  height: 100%;
+  flex: 1;
   box-sizing: border-box;
 }
+#view-tasks.on { display: flex; flex-direction: column; }
 
 .btn-tasks-refresh {
   background: var(--surface);
@@ -345,11 +347,9 @@
 .btn-assign-apply:disabled { opacity: .3; pointer-events: none; }
 
 .assign-ai-log {
-  padding: 10px 20px;
+  padding: 8px 20px;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
-  max-height: 120px;
-  overflow-y: auto;
   flex-shrink: 0;
 }
 
@@ -421,4 +421,26 @@
   width: 100%;
   font-size: 12px;
   padding: 4px 8px;
+}
+
+.assign-row-active {
+  background: rgba(255, 77, 0, 0.07) !important;
+  outline: 1px solid var(--accent-border);
+  outline-offset: -1px;
+}
+.assign-row-active .assign-id { color: var(--accent); }
+
+.assign-row-done {
+  background: rgba(74, 222, 128, 0.05) !important;
+}
+.assign-row-done .assign-agent-sel { border-color: rgba(74, 222, 128, 0.4); }
+
+.assign-row-err { opacity: .45; }
+
+.assign-reason {
+  font-size: 11px;
+  color: var(--text-3);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

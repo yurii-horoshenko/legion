@@ -63,8 +63,6 @@
   "sk_badge_global":     "global",
   "sk_badge_project":    "project",
   "sk_badge_both":       "global + project",
-  "ph_tools":  "Tools registered by this agent will appear here.",
-
   "tab_desc_overview":  "Agent identity, capabilities, and project information at a glance.",
   "tab_desc_chat":      "Send messages to this agent and receive responses in real time.",
   "tab_desc_workers":   "Background tasks running in parallel under this agent's supervision.",
@@ -80,7 +78,6 @@
   "pipe_mode_seq":      "sequential",
   "pipe_mode_par":      "parallel",
   "tab_desc_skills":    "Installed skills and slash commands available to this agent.",
-  "tab_desc_tools":     "External tools, MCP servers, and APIs registered for this agent.",
   "tab_desc_channels":  "Communication channels through which this agent sends and receives messages.",
   "tab_desc_cron":      "Scheduled jobs that trigger this agent automatically on a time-based schedule.",
   "tab_desc_config":    "Model selection and markdown configuration files for this agent.",

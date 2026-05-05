@@ -245,14 +245,18 @@ export function openAssignmentPanel(issues, integ) {
 async function runAutoAssign(issues, agents, overlay) {
   const btn    = overlay.querySelector('#btn-auto-assign');
   const logEl  = overlay.querySelector('#assign-ai-log');
+  const tbody  = overlay.querySelector('#assign-tbody');
   btn.disabled = true; btn.textContent = '…';
   logEl.style.display = '';
-  logEl.innerHTML = '<div class="assign-log-row">Starting AI analysis…</div>';
+  logEl.innerHTML = '';
+
+  const setStatus = (msg) => {
+    logEl.innerHTML = `<div class="assign-log-row">${esc(msg)}</div>`;
+  };
+
+  let assigned = 0;
 
   try {
-    const es = new EventSource(`/api/projects/${S.projectId}/linear/auto-assign`);
-    es.close();
-
     const r = await fetch(`/api/projects/${S.projectId}/linear/auto-assign`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -262,7 +266,6 @@ async function runAutoAssign(issues, agents, overlay) {
     const reader = r.body.getReader();
     const dec    = new TextDecoder();
     let   buf    = '';
-    let   result = null;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -274,33 +277,69 @@ async function runAutoAssign(issues, agents, overlay) {
         if (!line.startsWith('data:')) continue;
         try {
           const d = JSON.parse(line.slice(5).trim());
-          if (d.type === 'progress') {
-            logEl.innerHTML += `<div class="assign-log-row">${esc(d.message)}</div>`;
-            logEl.scrollTop = logEl.scrollHeight;
+
+          if (d.type === 'processing') {
+            // Highlight current row, remove previous highlight
+            tbody?.querySelectorAll('.assign-row').forEach(r => r.classList.remove('assign-row-active'));
+            const row = tbody?.querySelector(`.assign-row[data-issue-id="${d.issueId}"]`);
+            if (row) {
+              row.classList.add('assign-row-active');
+              row.scrollIntoView({ block: 'nearest' });
+            }
+            setStatus(`Processing ${d.index + 1} / ${d.total}…`);
           }
-          if (d.type === 'done')  result = d.result;
-          if (d.type === 'error') { logEl.innerHTML += `<div class="assign-log-row assign-log-err">${esc(d.message)}</div>`; }
+
+          if (d.type === 'assignment') {
+            const row = tbody?.querySelector(`.assign-row[data-issue-id="${d.issueId}"]`);
+            if (row) row.classList.remove('assign-row-active');
+
+            const sel = overlay.querySelector(`select[data-issue-id="${d.issueId}"]`);
+            if (sel && d.agentId) {
+              sel.value = d.agentId;
+              if (sel.value === d.agentId) {
+                _assignPending[d.issueId] = d.agentId;
+                assigned++;
+                if (row) row.classList.add('assign-row-done');
+                if (d.reason) {
+                  let tip = row?.querySelector('.assign-reason');
+                  if (!tip) {
+                    tip = document.createElement('span');
+                    tip.className = 'assign-reason';
+                    row?.querySelector('.assign-title')?.appendChild(tip);
+                  }
+                  tip.textContent = ' — ' + d.reason;
+                }
+              }
+            }
+            setStatus(`Processing… ${assigned} assigned so far`);
+          }
+
+          if (d.type === 'assignment-error') {
+            const row = tbody?.querySelector(`.assign-row[data-issue-id="${d.issueId}"]`);
+            if (row) { row.classList.remove('assign-row-active'); row.classList.add('assign-row-err'); }
+          }
+
+          if (d.type === 'progress') {
+            setStatus(d.message);
+          }
+
+          if (d.type === 'done') {
+            tbody?.querySelectorAll('.assign-row').forEach(r => r.classList.remove('assign-row-active'));
+            setStatus(`✓ Done — ${assigned}/${issues.length} assigned`);
+            logEl.querySelector('.assign-log-row')?.classList.add('assign-log-ok');
+            $('#btn-apply-assign').disabled = assigned === 0;
+          }
+
+          if (d.type === 'error') {
+            setStatus(d.message);
+            logEl.querySelector('.assign-log-row')?.classList.add('assign-log-err');
+          }
         } catch {}
       }
     }
-
-    if (result?.assignments?.length) {
-      let applied = 0;
-      for (const asgn of result.assignments) {
-        const sel = overlay.querySelector(`select[data-issue-id="${asgn.issueId}"]`);
-        if (sel && asgn.agentId) {
-          sel.value = asgn.agentId;
-          if (sel.value === asgn.agentId) {
-            _assignPending[asgn.issueId] = asgn.agentId;
-            applied++;
-          }
-        }
-      }
-      logEl.innerHTML += `<div class="assign-log-row assign-log-ok">✓ ${applied} assignments suggested — review and click "Apply to Linear"</div>`;
-      $('#btn-apply-assign').disabled = applied === 0;
-    }
   } catch (e) {
-    logEl.innerHTML += `<div class="assign-log-row assign-log-err">Error: ${esc(e.message)}</div>`;
+    setStatus('Error: ' + e.message);
+    logEl.querySelector('.assign-log-row')?.classList.add('assign-log-err');
   } finally {
     btn.disabled = false; btn.textContent = '⚡ AI Auto-assign';
   }

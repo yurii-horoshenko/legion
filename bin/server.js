@@ -23,6 +23,7 @@ module.exports = function startServer({ port, doOpen, webRoot }) {
 
   const httpLib  = require("../lib/http");
   const io       = require("../lib/io")(configDir);
+  const db       = require("../lib/db")(configDir);
   const aiLib    = require("../lib/ai")(httpLib, io);
   const agentFs  = require("../lib/agents-fs")(io, agentsBaseDir, webRoot);
   const visor    = require("../lib/visor")(io, aiLib);
@@ -30,7 +31,7 @@ module.exports = function startServer({ port, doOpen, webRoot }) {
   // Sync .legion/agents → .claude/agents/ for native Claude Code pickup
   agentFs.syncClaudeAgents();
 
-  const ctx = { io, http: httpLib, ai: aiLib, agentFs, visor, webRoot, agentsBaseDir, port, exec };
+  const ctx = { io, http: httpLib, ai: aiLib, agentFs, visor, db, webRoot, agentsBaseDir, port, exec };
 
   const handlers = [
     require("../routes/projects")(ctx),
@@ -106,6 +107,20 @@ module.exports = function startServer({ port, doOpen, webRoot }) {
       console.error("Request error:", err.message);
       try { httpLib.json(res, 500, { error: "Internal error" }); } catch {}
     }
+  });
+
+  // WebSocket upgrade
+  const ws = require("../lib/ws")(server);
+  ctx.ws = ws;
+
+  // GET /api/events?pid=&limit=  — recent activity from SQLite
+  handlers.unshift(async (urlPath, method, req, res) => {
+    if (urlPath !== "/api/events" || method !== "GET") return false;
+    const qs    = new URL(req.url, "http://x").searchParams;
+    const pid   = qs.get("pid") || undefined;
+    const limit = Math.min(parseInt(qs.get("limit") || "60", 10), 200);
+    httpLib.json(res, 200, db.recent(pid, limit));
+    return true;
   });
 
   server.listen(port, "localhost", () => {

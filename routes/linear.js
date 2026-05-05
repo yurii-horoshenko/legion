@@ -129,7 +129,7 @@ module.exports = function createLinearRoutes(ctx) {
       const integ  = io.readIntegrations(project);
       const apiKey = integ.linear?.apiKey;
       if (!apiKey) { http.json(res, 400, { error: "Linear API key not configured" }); return true; }
-      const issueId = parts[7];
+      const issueId = parts[6];
       const { labelIds } = body;
       if (!Array.isArray(labelIds)) { http.json(res, 400, { error: "labelIds array required" }); return true; }
       try {
@@ -170,54 +170,54 @@ module.exports = function createLinearRoutes(ctx) {
         const provider  = providers.find(p => p.id === model.providerId);
         if (!provider) return fail("Provider not found");
 
-        const issues = body.issues || [];
+        const issues = (body.issues || []).slice(0, 100);
         const agents = (io.readPAgents()[parts[3]] || [])
           .map(a => ({ id: a.id, name: a.name, labelName: a.linearLabelName || a.name, role: a.role || a.description || a.group || "" }));
 
         if (!issues.length) return fail("No issues provided");
         if (!agents.length) return fail("No agents in this project");
 
-        prog(`Analyzing ${issues.length} issues across ${agents.length} agents…`);
-
-        const issueList = issues.slice(0, 100).map((i, idx) =>
-          `${idx + 1}. id:"${i.id}" | ${i.identifier || ""} | ${i.title || "Untitled"} | ${(i.description || "").slice(0, 120)}`
-        ).join("\n");
         const agentList = agents.map(a =>
-          `- id:"${a.id}" | name:${a.name} | label:"${a.labelName}" | role:${a.role || "—"}`
+          `- id:"${a.id}" | name:${a.name} | role:${a.role || "—"}`
         ).join("\n");
 
-        const prompt = [
-          `You are assigning Linear project issues to AI agents based on their roles and issue content.`,
+        const sysPrompt = [
+          `You are assigning a Linear issue to the most appropriate agent based on agent roles.`,
           ``,
           `# Agents`,
           agentList,
           ``,
-          `# Issues to assign`,
-          issueList,
-          ``,
-          `# Instructions`,
-          `Assign each issue to the most appropriate agent based on the issue content and agent roles.`,
-          `Return ONLY valid JSON:`,
-          `{`,
-          `  "assignments": [`,
-          `    { "issueId": "issue-id", "agentId": "agent-id", "agentName": "name", "reason": "one sentence" }`,
-          `  ]`,
-          `}`,
+          `Return ONLY valid JSON (no markdown):`,
+          `{ "agentId": "agent-id", "agentName": "name", "reason": "one sentence" }`,
         ].join("\n");
 
-        if (aborted) return;
-        prog("Calling AI…");
-        const raw = await ai.callAI(model, provider, prompt);
-        if (aborted) return;
+        prog(`Starting — ${issues.length} issues, ${agents.length} agents`);
 
-        prog("Parsing assignments…");
-        const stripped = raw.replace(/^```(?:json)?\s*/m, "").replace(/\s*```\s*$/m, "").trim();
-        const jsonStr  = stripped.startsWith("{") ? stripped : (stripped.match(/\{[\s\S]*\}/)?.[0] || "");
-        if (!jsonStr) return fail("AI returned invalid response");
-        const plan = JSON.parse(jsonStr);
+        let assigned = 0;
+        for (let idx = 0; idx < issues.length; idx++) {
+          if (aborted) break;
+          const issue = issues[idx];
+          send("processing", { issueId: issue.id, index: idx, total: issues.length });
 
-        prog(`Done — ${(plan.assignments || []).length} assignments suggested`);
-        done(plan);
+          const userMsg = `Issue ${issue.identifier || ""}: ${issue.title || "Untitled"}\n${(issue.description || "").slice(0, 200)}`;
+          try {
+            const raw      = await ai.callAIMessages(model, provider, sysPrompt, [{ role: "user", content: userMsg }]);
+            const stripped = raw.replace(/^```(?:json)?\s*/m, "").replace(/\s*```\s*$/m, "").trim();
+            const jsonStr  = stripped.startsWith("{") ? stripped : (stripped.match(/\{[\s\S]*\}/)?.[0] || "");
+            if (jsonStr) {
+              const parsed = JSON.parse(jsonStr);
+              if (parsed.agentId) {
+                send("assignment", { issueId: issue.id, agentId: parsed.agentId, agentName: parsed.agentName || "", reason: parsed.reason || "" });
+                assigned++;
+              }
+            }
+          } catch (e) {
+            send("assignment-error", { issueId: issue.id, message: e.message });
+          }
+        }
+
+        prog(`Done — ${assigned}/${issues.length} assigned`);
+        done({ assigned, total: issues.length });
       } catch (e) {
         console.error("[auto-assign]", e.message);
         fail("Auto-assign failed: " + e.message);

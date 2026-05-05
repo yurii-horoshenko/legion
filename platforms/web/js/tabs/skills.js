@@ -9,8 +9,8 @@ export async function renderSkills(a) {
   const el = $('#tab-skills');
   if (!el) return;
 
-  const SOURCE_LABELS = { skillsh: 'skills.sh', github: 'GitHub', smithery: 'Smithery' };
-  const SOURCE_COLORS = { skillsh: '#6366f1', github: '#374151', smithery: '#0ea5e9' };
+  const SOURCE_LABELS = { github: 'GitHub' };
+  const SOURCE_COLORS = { github: '#374151' };
   const TYPE_ICONS    = { skill: '⚡', mcp: '🔌' };
 
   el.innerHTML = `

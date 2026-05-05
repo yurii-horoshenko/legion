@@ -7,7 +7,7 @@
 
 ## Current state (v0.1.0)
 
-Fully working web portal with file-based storage and real AI chat. Modular Node.js server (lib/ + routes/). No Swift runtime yet — the platform manages agent configuration, catalog, pipelines, and metadata.
+Fully working web portal with file-based storage and real AI chat. Modular Node.js server (lib/ + routes/). The platform manages agent configuration, catalog, pipelines, and metadata.
 
 ---
 
@@ -268,7 +268,7 @@ Exactly one screen is active at a time (`showView()` switches all at once).
 | Workers | CRUD list of workers with dot status indicator |
 | Memories | List with filter (Persistent / Temporary / Todo), synced to MEMORY.md |
 | Tasks | Kanban by status (Backlog / In Progress / Ready / Done) |
-| Skills | Skill registry *(runtime integration in progress)* |
+| Skills | Assign skills, AI-powered suggestions, `~/.claude/skills` browser |
 | Tools | Tool configuration *(runtime integration in progress)* |
 | Channels | CRUD channels (HTTP, Telegram, Discord, Webhook, MCP) |
 | Cron | CRUD scheduled jobs (schedule + command + channel) |
@@ -296,11 +296,5 @@ File `js/i18n.js` — EN/RU. Toggle via topbar button. Catalog cards read locale
 
 | Component | Status |
 |-----------|--------|
-| Swift runtime core (Channel/Branch/Worker) | Not started |
-| Real-time WebSocket activity feed | Not started |
-| Skills registry integration | Stub |
-| Tools tab | Stub |
 | SQLite persistence layer | Not started |
-| Vector memory (ChromaDB) | Not started |
-| Telegram / Discord gateway | Not started |
-| Native macOS / iOS app | Not started |
+| Real-time WebSocket activity feed | Not started |

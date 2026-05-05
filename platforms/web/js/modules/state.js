@@ -15,6 +15,8 @@ export let PROJECTS = [];
 export let CATALOG_AGENTS = [];
 export let catalogLoaded = false;
 export let addedAgentIds = new Set();
+export let catalogFilter = 'All';
+export let catalogSearch = '';
 
 export function setModels(m) { MODELS = m; }
 export function setProviders(p) { PROVIDERS = p; }
@@ -23,3 +25,5 @@ export function setProjects(p) { PROJECTS = p; }
 export function setCatalogAgents(a) { CATALOG_AGENTS = a; }
 export function setCatalogLoaded(v) { catalogLoaded = v; }
 export function setAddedAgentIds(s) { addedAgentIds = s; }
+export function setCatalogFilter(v) { catalogFilter = v; }
+export function setCatalogSearch(v) { catalogSearch = v; }

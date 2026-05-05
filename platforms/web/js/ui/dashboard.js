@@ -34,9 +34,51 @@ export function renderDash() {
   $('#s-tasks').textContent   = pa.reduce((s, a) => s + (a.tasks || 0), 0);
   $('#s-busy').textContent    = pa.filter(a => a.status === 'busy').length;
 
-  $('#act-feed').innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-3);font-size:12px">No activity yet</div>`;
+  const feed = $('#act-feed');
+  if (feed && !feed.dataset.live) {
+    feed.dataset.live = '1';
+    feed.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-3);font-size:12px">No activity yet</div>`;
+  }
   loadVisorBulletins();
   renderTeamMap();
+}
+
+const ACTIVITY_ICONS = {
+  'agent:added':    '＋',
+  'agent:updated':  '✎',
+  'agent:removed':  '✕',
+  'task:created':   '◎',
+  'task:updated':   '●',
+  'task:deleted':   '○',
+  'chat:message':   '✉',
+};
+
+export function pushActivity(msg) {
+  const feed = $('#act-feed');
+  if (!feed) return;
+
+  const placeholder = feed.querySelector('div[style]');
+  if (placeholder && feed.children.length === 1) placeholder.remove();
+
+  const icon  = ACTIVITY_ICONS[msg.type] || '·';
+  const label = msg.agentName || msg.name || msg.aid || '';
+  const detail = msg.task?.title || msg.task?.status || msg.preview || '';
+  const time   = new Date(msg.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  const item = document.createElement('div');
+  item.className = 'act-item';
+  item.innerHTML = `
+    <span class="act-icon">${esc(icon)}</span>
+    <span class="act-body">
+      <span class="act-label">${esc(label)}</span>
+      ${detail ? `<span class="act-detail">${esc(detail)}</span>` : ''}
+    </span>
+    <span class="act-time">${esc(time)}</span>`;
+
+  feed.insertBefore(item, feed.firstChild);
+
+  // Keep max 40 items
+  while (feed.children.length > 40) feed.removeChild(feed.lastChild);
 }
 
 export async function loadVisorBulletins() {

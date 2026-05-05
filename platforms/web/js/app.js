@@ -6,14 +6,14 @@ import i18n from './i18n.js';
 
 import { S, setLegionConfig } from './modules/state.js';
 import { $, $$ } from './modules/utils.js';
-import { loadProjects } from './modules/api.js';
+import { loadProjects, connectActivityWS, onActivity } from './modules/api.js';
 
 import { renderProjBtn, renderProjList, openProj, closeProj } from './ui/topbar.js';
 import { renderTree, initAgentsHeaderToggle, registerSelectAgent } from './ui/sidebar.js';
 import { showView, showDash, renderDash, loadVisorBulletins } from './ui/dashboard.js';
 import { selectAgent, renderTab } from './ui/agent-panel.js';
 import { showCatalog, hideCatalog, renderCatalogFilters, renderCatalogGrid,
-         initCatalogFilterListener, setCatalogSearchLocal, syncAddedIds } from './ui/catalog.js';
+         initCatalogFilterListener, setCatalogSearchLocal } from './ui/catalog.js';
 import { showAnalyze, runAnalyze, getAnalyzeController } from './ui/analyze.js';
 import { showTasks, renderProjectTasks, getCurrentTaskSrc } from './ui/tasks-view.js';
 
@@ -207,6 +207,10 @@ async function init() {
   renderProjBtn();
   renderTree();
   renderDash();
+
+  // ── WebSocket activity feed ───────────────────────────────────────────────
+  onActivity(msg => { import('./ui/dashboard.js').then(m => m.pushActivity(msg)); });
+  connectActivityWS();
 }
 
 document.addEventListener('DOMContentLoaded', () => init());

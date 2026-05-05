@@ -141,3 +141,32 @@ export async function fetchIntegrations() {
 }
 
 export function setIntegCache(val) { _integCache = val; }
+
+// ── WebSocket activity feed ────────────────────────────────────────────────
+
+let _wsHandlers = [];
+let _wsSocket   = null;
+
+export function onActivity(fn) { _wsHandlers.push(fn); }
+
+export function connectActivityWS() {
+  if (_wsSocket) return;
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const sock  = new WebSocket(`${proto}://${location.host}/ws`);
+  _wsSocket = sock;
+
+  sock.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      _wsHandlers.forEach(fn => fn(msg));
+    } catch {}
+  };
+
+  sock.onclose = () => {
+    _wsSocket = null;
+    // Reconnect after 3s
+    setTimeout(connectActivityWS, 3000);
+  };
+
+  sock.onerror = () => sock.close();
+}

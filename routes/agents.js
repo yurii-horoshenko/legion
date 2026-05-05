@@ -5,7 +5,7 @@ const path   = require("path");
 const crypto = require("crypto");
 
 module.exports = function createAgentRoutes(ctx) {
-  const { io, http, agentFs, port } = ctx;
+  const { io, http, agentFs, port, db, ws } = ctx;
 
   return async function handle(urlPath, method, req, res, body) {
 
@@ -47,6 +47,9 @@ module.exports = function createAgentRoutes(ctx) {
       }
       io.writePAgents(map);
       if (project) agentFs.syncLegionMd(project, projectId);
+      const ev = { pid: projectId, aid: agent.id, name: agent.name, action: existing < 0 ? "added" : "updated" };
+      db?.log("agent:" + ev.action, projectId, agent.id, { name: agent.name });
+      ws?.broadcast("agent:" + ev.action, ev);
       http.json(res, 200, { ok: true });
       return true;
     }
@@ -217,6 +220,10 @@ module.exports = function createAgentRoutes(ctx) {
         list.push(item);
         writeStore(list);
         syncPipelineMd(list);
+        if (store === "tasks") {
+          db?.log("task:created", projectId, agentId, { id: item.id, title: item.title, status: item.status });
+          ws?.broadcast("task:created", { pid: projectId, aid: agentId, task: item });
+        }
         http.json(res, 200, item);
         return true;
       }
@@ -227,6 +234,10 @@ module.exports = function createAgentRoutes(ctx) {
         list[idx] = { ...list[idx], ...body, id: itemId, updatedAt: new Date().toISOString() };
         writeStore(list);
         syncPipelineMd(list);
+        if (store === "tasks") {
+          db?.log("task:updated", projectId, agentId, { id: itemId, status: list[idx].status, title: list[idx].title });
+          ws?.broadcast("task:updated", { pid: projectId, aid: agentId, task: list[idx] });
+        }
         http.json(res, 200, list[idx]);
         return true;
       }
@@ -234,6 +245,10 @@ module.exports = function createAgentRoutes(ctx) {
         const list = readStore().filter(x => x.id !== itemId);
         writeStore(list);
         syncPipelineMd(list);
+        if (store === "tasks") {
+          db?.log("task:deleted", projectId, agentId, { id: itemId });
+          ws?.broadcast("task:deleted", { pid: projectId, aid: agentId, taskId: itemId });
+        }
         http.json(res, 200, { ok: true });
         return true;
       }
@@ -289,11 +304,14 @@ module.exports = function createAgentRoutes(ctx) {
       const projectId = parts[3];
       const agentId   = parts[5];
       const map       = io.readPAgents();
+      const removed   = (map[projectId] || []).find(a => a.id === agentId);
       if (map[projectId]) map[projectId] = map[projectId].filter(a => a.id !== agentId);
       io.writePAgents(map);
       const project = io.readProjects().find(p => p.id === projectId);
       if (project) agentFs.deleteAgentFile(project, agentId);
       if (project) agentFs.syncLegionMd(project, projectId);
+      db?.log("agent:removed", projectId, agentId, { name: removed?.name });
+      ws?.broadcast("agent:removed", { pid: projectId, aid: agentId, name: removed?.name });
       http.json(res, 200, { ok: true });
       return true;
     }

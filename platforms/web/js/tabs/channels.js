@@ -7,11 +7,9 @@ import { storeGet, storeDel, storePatch, storePost } from '../modules/api.js';
 import { showMiniModal, closeMiniModal } from '../modals/mini-modal.js';
 
 export const CHANNEL_TYPES = [
-  { type: 'http',     label: 'HTTP API',  icon: '⇌' },
-  { type: 'telegram', label: 'Telegram',  icon: '✈' },
-  { type: 'discord',  label: 'Discord',   icon: '◈' },
-  { type: 'webhook',  label: 'Webhook',   icon: '⚡' },
-  { type: 'mcp',      label: 'MCP',       icon: '⚒' },
+  { type: 'http',    label: 'HTTP API', icon: '⇌' },
+  { type: 'webhook', label: 'Webhook',  icon: '⚡' },
+  { type: 'mcp',     label: 'MCP',      icon: '⚒' },
 ];
 
 export async function renderChannels(a) {

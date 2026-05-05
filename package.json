@@ -11,7 +11,7 @@
     "core"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=23"
   },
   "keywords": ["ai", "agents", "legion"],
   "scripts": {

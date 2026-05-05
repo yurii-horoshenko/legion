@@ -5,7 +5,7 @@ const path = require("path");
 const os   = require("os");
 
 module.exports = function createChatRoutes(ctx) {
-  const { io, http, ai } = ctx;
+  const { io, http, ai, db, ws } = ctx;
 
   return async function handle(urlPath, method, req, res, body) {
 
@@ -85,6 +85,8 @@ Introduce yourself in 3-5 sentences. Cover: your name, your specialization in th
       const systemPrompt = `You are ${agent.name}. ${agent.role}${ai.langDirective(body.lang)}`;
       try {
         const reply = await ai.callAIMessages(modelObj, provider, systemPrompt, [{ role: "user", content: message.trim() }]);
+        db?.log("chat:message", pid, aid, { role: "user", preview: message.slice(0, 80) });
+        ws?.broadcast("chat:message", { pid, aid, agentName: agent.name, preview: message.slice(0, 80) });
         http.json(res, 200, { reply });
       } catch (err) {
         http.json(res, 500, { error: err.message });

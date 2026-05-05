@@ -156,7 +156,7 @@ Every agent in a project gets its own directory:
 | **Workers** | Persistent background processes with live status indicators |
 | **Memories** | Persistent / Temporary / Todo memory, synced to `MEMORY.md` on disk |
 | **Tasks** | Kanban board — Backlog → In Progress → Ready → Done |
-| **Skills** | Skill registry *(runtime integration in progress)* |
+| **Skills** | Assign skills, AI-powered suggestions, `~/.claude/skills` browser |
 | **Tools** | Tool configuration *(runtime integration in progress)* |
 | **Channels** | HTTP · Telegram · Discord · Webhook · MCP |
 | **Cron** | Scheduled jobs with cron expressions |
@@ -250,13 +250,9 @@ Keys are stored in `core/config/.pkeys.json` and `core/config/.keys.json` — bo
 | Real AI chat with per-agent model routing | ✅ Done |
 | Ollama proxy for Claude Code (`/api/proxy/v1/messages`) | ✅ Done |
 | Modular server architecture (lib/ + routes/) | ✅ Done |
-| Swift runtime core (Channel / Branch / Worker) | 🔲 Planned |
-| Real-time WebSocket activity feed | 🔲 Planned |
-| Skills registry integration | 🔲 Planned |
+| Skills tab (assign, AI suggest, `~/.claude/skills`) | ✅ Done |
 | SQLite persistence layer | 🔲 Planned |
-| Vector memory (ChromaDB) | 🔲 Planned |
-| Telegram / Discord gateway | 🔲 Planned |
-| Native macOS / iOS app | 🔲 Planned |
+| Real-time WebSocket activity feed | 🔲 Planned |
 
 ---
 

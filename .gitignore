@@ -1,6 +1,9 @@
 node_modules/
 core/config/.keys.json
 core/config/.pkeys.json
+core/config/legion.db
+core/config/legion.db-shm
+core/config/legion.db-wal
 platforms/web/data/agents-catalog.json
 
 # Claude Code
