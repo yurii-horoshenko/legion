@@ -638,6 +638,54 @@ function cmdWeb(args) {
       return json(res, 200, { ok: true });
     }
 
+    // Agent avatar  GET/PUT /api/projects/:pid/agents/:aid/avatar
+    if (urlPath.match(/^\/api\/projects\/[^/]+\/agents\/[^/]+\/avatar$/) && method === "GET") {
+      const parts = urlPath.split("/");
+      const projectId = parts[3]; const agentId = parts[5];
+      const project = readProjects().find(p => p.id === projectId);
+      if (!project?.path) return json(res, 404, { error: "No path" });
+      const dir = path.join(project.path, ".legion", "agents", agentId);
+      for (const ext of ["png", "jpg", "jpeg", "webp", "gif"]) {
+        const fp = path.join(dir, `avatar.${ext}`);
+        if (fs.existsSync(fp)) {
+          const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "gif" ? "image/gif" : ext === "webp" ? "image/webp" : "image/png";
+          res.writeHead(200, { "Content-Type": mime, "Cache-Control": "no-store" });
+          return res.end(fs.readFileSync(fp));
+        }
+      }
+      return json(res, 404, { error: "No avatar" });
+    }
+
+    if (urlPath.match(/^\/api\/projects\/[^/]+\/agents\/[^/]+\/avatar$/) && method === "PUT") {
+      const parts = urlPath.split("/");
+      const projectId = parts[3]; const agentId = parts[5];
+      const project = readProjects().find(p => p.id === projectId);
+      if (!project?.path) return json(res, 404, { error: "No path" });
+      const ct  = req.headers["content-type"] || "";
+      const ext = ct.includes("jpeg") || ct.includes("jpg") ? "jpg" : ct.includes("webp") ? "webp" : ct.includes("gif") ? "gif" : "png";
+      const dir = path.join(project.path, ".legion", "agents", agentId);
+      fs.mkdirSync(dir, { recursive: true });
+      // Remove old avatars
+      for (const e of ["png","jpg","jpeg","webp","gif"]) { try { fs.unlinkSync(path.join(dir, `avatar.${e}`)); } catch {} }
+      const chunks = []; for await (const c of req) chunks.push(c);
+      fs.writeFileSync(path.join(dir, `avatar.${ext}`), Buffer.concat(chunks));
+      return json(res, 200, { ok: true });
+    }
+
+    // Agent doc files list  GET /api/projects/:pid/agents/:aid/files
+    if (urlPath.match(/^\/api\/projects\/[^/]+\/agents\/[^/]+\/files$/) && method === "GET") {
+      const parts     = urlPath.split("/");
+      const projectId = parts[3];
+      const agentId   = parts[5];
+      const project   = readProjects().find(p => p.id === projectId);
+      if (!project?.path) return json(res, 404, { error: "Project has no path" });
+      const agentDir  = path.join(project.path, ".legion", "agents", agentId);
+      const files = fs.existsSync(agentDir)
+        ? fs.readdirSync(agentDir).filter(f => f.endsWith(".md") && f !== "agent.md").sort()
+        : [];
+      return json(res, 200, { files });
+    }
+
     // Agent doc files  GET/PUT /api/projects/:pid/agents/:aid/files/:filename
     if (urlPath.match(/^\/api\/projects\/[^/]+\/agents\/[^/]+\/files\/[^/]+$/) && method === "GET") {
       const parts     = urlPath.split("/");

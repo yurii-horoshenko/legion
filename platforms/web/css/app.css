@@ -828,6 +828,9 @@ html, body { height: 100%; overflow: hidden; font-family: var(--sans); font-size
 
 .tab-body.on { display: block; }
 
+/* Overview stretches edge-to-edge, no extra padding */
+#tab-overview.tab-body { padding: 0; }
+
 /* ── Overview tab ── */
 .ov-grid {
   display: grid;
@@ -860,13 +863,6 @@ html, body { height: 100%; overflow: hidden; font-family: var(--sans); font-size
 .ov-desc { font-size: 12px; color: var(--text-2); line-height: 1.7; margin: 0; }
 .ov-vibe { font-size: 11px; color: var(--text-3); font-style: italic; margin: 10px 0 0; line-height: 1.5; }
 
-.ov-danger {
-  margin-top: 32px;
-  border: 1px solid color-mix(in srgb, var(--err) 30%, transparent);
-  border-radius: var(--r);
-  padding: 16px 20px;
-  max-width: 600px;
-}
 
 .cap-list { display: flex; flex-wrap: wrap; gap: 5px; }
 
@@ -877,6 +873,263 @@ html, body { height: 100%; overflow: hidden; font-family: var(--sans); font-size
   background: var(--bg-hover);
   border: 1px solid var(--border);
   color: var(--text-2);
+}
+
+/* ── Agent overview ── */
+.ov-loading { padding: 32px; color: var(--text-3); font-size: 13px; }
+
+/* two-column layout */
+.ov-layout {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 0;
+  align-items: stretch;
+  min-height: 100%;
+  width: 100%;
+}
+
+/* ── Left: character card ── */
+.ov-char {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 16px;
+  border-right: 1px solid var(--border);
+  gap: 10px;
+}
+
+.ov-char-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--bg-hover);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ov-char-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.ov-char-empty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(160deg, var(--bg-hover) 0%, var(--bg-card) 100%);
+}
+
+.ov-char-emoji { font-size: 64px; line-height: 1; opacity: .6; }
+
+.ov-char-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  opacity: 0;
+  transition: opacity .15s;
+  pointer-events: none;
+}
+.ov-char-frame:hover .ov-char-overlay { opacity: 1; }
+
+.ov-file-hidden {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ov-char-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  text-align: center;
+  line-height: 1.3;
+}
+
+.ov-char-group {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.ov-char-vibe {
+  font-size: 11px;
+  color: var(--text-3);
+  font-style: italic;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.ov-char-meta {
+  margin-top: auto;
+  width: 100%;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.btn-danger-sm {
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 10px;
+  font-size: 11px;
+  opacity: .7;
+}
+.btn-danger-sm:hover { opacity: 1; }
+
+.ov-char-meta-row {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text-3);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 1px 0;
+}
+
+/* ── Right: info panel ── */
+.ov-panel {
+  min-width: 0;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+}
+
+.ov-panel-desc {
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.7;
+  margin-bottom: 14px;
+}
+
+/* ── About block (desc + caps) ── */
+.ov-about {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+  margin-bottom: 16px;
+}
+
+.ov-about-desc {
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.7;
+  margin-bottom: 12px;
+}
+
+/* ── Capabilities ── */
+.ov-caps { margin-bottom: 0; }
+
+/* ── Stats: unified list ── */
+.ov-stats-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 6px;
+}
+
+.ov-stats {
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+.ov-stat-row {
+  display: grid;
+  grid-template-columns: 20px 90px 1fr 32px 16px;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  transition: background .12s;
+}
+.ov-stat-row:hover { background: var(--bg-hover); }
+.ov-stat-last { border-bottom: none; }
+
+.ov-stat-row.ov-stat-glow { background: rgba(239,68,68,.04); }
+.ov-stat-row.ov-stat-glow:hover { background: rgba(239,68,68,.08); }
+
+.ov-stat-icon { font-size: 13px; text-align: center; }
+
+.ov-stat-name {
+  font-size: 12px;
+  color: var(--text-2);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.ov-stat-bar-wrap { min-width: 0; }
+
+.ov-stat-track {
+  height: 3px;
+  background: var(--bg-hover);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.ov-stat-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width .6s cubic-bezier(.4,0,.2,1);
+}
+
+.ov-stat-num {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.ov-stat-info {
+  font-size: 11px;
+  color: var(--text-3);
+  cursor: default;
+  position: relative;
+  text-align: center;
+  line-height: 1;
+}
+.ov-stat-info:hover { color: var(--text-2); }
+.ov-stat-info:hover::after { opacity: 1; transform: translateY(0); }
+.ov-stat-info::after {
+  content: attr(data-tip);
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 6px 10px;
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--text-2);
+  box-shadow: 0 4px 16px rgba(0,0,0,.15);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity .15s, transform .15s;
+  z-index: 100;
+  width: 220px;
+  white-space: normal;
+  word-break: break-word;
+  text-align: right;
 }
 
 /* ── Workers tab ── */

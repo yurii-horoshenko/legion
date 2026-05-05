@@ -1,13 +1,5 @@
 [
   {
-    "name": "BladeParry",
-    "description": "",
-    "path": "/Users/gi_part/Standart/Projects/BladeParry",
-    "status": "ok",
-    "agents": 0,
-    "id": "e3ad622f-987b-46ef-9114-b5c195047b05"
-  },
-  {
     "name": "VisiTime",
     "description": "",
     "path": "/Users/gi_part/Standart/Projects/VisiTime",
@@ -22,5 +14,13 @@
     "status": "ok",
     "agents": 0,
     "id": "dd0cd474-153e-44e3-b4ed-e48232060f2e"
+  },
+  {
+    "name": "BladeParry",
+    "description": "",
+    "path": "/Users/gi_part/Standart/Projects/BladeParry",
+    "status": "ok",
+    "agents": 0,
+    "id": "36bc6ebd-2d43-4e10-8de2-abc47388e919"
   }
 ]
