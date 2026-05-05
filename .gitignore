@@ -2,3 +2,9 @@ node_modules/
 core/config/.keys.json
 core/config/.pkeys.json
 platforms/web/data/agents-catalog.json
+
+# Claude Code
+CLAUDE.md
+.claudeignore
+.claude/
+.legion/

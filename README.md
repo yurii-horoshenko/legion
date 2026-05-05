@@ -1,6 +1,9 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/⚔️_LEGION-AI_Agent_Platform-000000?style=for-the-badge" alt="Legion"/>
+  <img src="platforms/web/assets/characters/default.png" width="120" alt="Legion"/>
 </p>
+
+<h1 align="center">LEGION</h1>
+<p align="center"><em>Local AI Agent Platform</em></p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/node-%3E%3D18-3c873a?style=flat-square&logo=node.js&logoColor=white"/>

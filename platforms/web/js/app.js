@@ -246,7 +246,7 @@ function initAgentsHeaderToggle() {
 
 // ── Dashboard ──────────────────────────────────────────────────────────────
 
-const VIEWS = ['view-dash', 'view-catalog', 'view-agent', 'view-settings', 'view-home', 'view-overview', 'view-analyze'];
+const VIEWS = ['view-dash', 'view-catalog', 'view-agent', 'view-settings', 'view-home', 'view-overview', 'view-analyze', 'view-tasks'];
 
 function showView(name) {
   VIEWS.forEach(id => {
@@ -276,8 +276,244 @@ function renderDash() {
   $('#s-busy').textContent    = pa.filter(a=>a.status==='busy').length;
 
   $('#act-feed').innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-3);font-size:12px">No activity yet</div>`;
+  loadVisorBulletins();
+  renderTeamMap();
+}
 
-  $('#bull-feed').innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-3);font-size:12px">No bulletins yet</div>`;
+async function loadVisorBulletins() {
+  const el = $('#bull-feed');
+  if (!el || !S.projectId) return;
+  try {
+    const r = await fetch(`/api/projects/${S.projectId}/visor`);
+    if (!r.ok) throw new Error('fetch failed');
+    const bulletins = await r.json();
+    if (!bulletins.length) {
+      el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-3);font-size:12px">No bulletins yet</div>`;
+      return;
+    }
+    el.innerHTML = bulletins.slice(0, 8).map(b => {
+      const hcls = b.health === 'healthy' ? 'healthy' : b.health === 'critical' ? 'critical' : 'degraded';
+      const hIcon = b.health === 'healthy' ? '●' : b.health === 'critical' ? '⚠' : '◐';
+      const agents = b.agentReports || [];
+      return `
+        <div class="bull-item">
+          <div class="bull-head">
+            <span class="bull-health ${hcls}">${hIcon} ${b.health}</span>
+            <span class="bull-time">${relTime(b.timestamp)}</span>
+          </div>
+          <div class="bull-text">${esc(b.summary)}</div>
+          ${agents.length ? `<div class="bull-agents">${agents.map(a =>
+            `<span class="bull-agent-warn">${esc(a.emoji || '🤖')} ${esc(a.name)}: ${[
+              a.staleWorkers  ? `${a.staleWorkers} stale`  : '',
+              a.failedWorkers ? `${a.failedWorkers} failed` : '',
+              a.stuckTasks    ? `${a.stuckTasks} stuck`    : '',
+            ].filter(Boolean).join(', ')}</span>`
+          ).join('')}</div>` : ''}
+        </div>`;
+    }).join('');
+  } catch {
+    el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-3);font-size:12px">Could not load bulletins</div>`;
+  }
+}
+
+async function renderTeamMap() {
+  const el = $('#team-map');
+  if (!el) return;
+  el.innerHTML = `<div class="tm-empty">Loading…</div>`;
+
+  try {
+    const r = await fetch(`/api/projects/${S.projectId}/pipelines`);
+    const { agents, connections } = await r.json();
+
+    if (!connections.length) {
+      el.innerHTML = `<div class="tm-empty">No pipeline connections yet. Add pipelines to agents to see the call hierarchy.</div>`;
+      return;
+    }
+
+    const NODE_W = 162, NODE_H = 56, H_GAP = 108, V_GAP = 20, PAD = 28;
+    const agentMap = Object.fromEntries(agents.map(a => [a.id, a]));
+
+    // ── Level assignment (BFS) ────────────────────────────────────────────
+    const connectedIds = new Set([...connections.map(c => c.from), ...connections.map(c => c.to)]);
+    const outEdges = {}, inEdges = {}, inDeg = {};
+    for (const id of connectedIds) { outEdges[id] = []; inEdges[id] = []; inDeg[id] = 0; }
+    for (const c of connections) {
+      outEdges[c.from].push(c.to);
+      inEdges[c.to].push(c.from);
+      inDeg[c.to]++;
+    }
+    const level = {};
+    const bfsQ = [...connectedIds].filter(id => inDeg[id] === 0);
+    if (!bfsQ.length) bfsQ.push([...connectedIds][0]);
+    bfsQ.forEach(id => { level[id] = 0; });
+    let qi = 0;
+    while (qi < bfsQ.length) {
+      const id = bfsQ[qi++];
+      for (const to of outEdges[id]) {
+        if (level[to] === undefined || level[to] <= level[id]) {
+          level[to] = level[id] + 1;
+          if (!bfsQ.includes(to)) bfsQ.push(to);
+        }
+      }
+    }
+
+    const byLevel = {};
+    for (const id of connectedIds) {
+      const l = level[id] ?? 0;
+      (byLevel[l] = byLevel[l] || []).push(id);
+    }
+
+    // ── Barycenter crossing minimisation (3 forward + backward passes) ────
+    const levels = Object.keys(byLevel).map(Number).sort((a, b) => a - b);
+    const bary = (ids, srcIds, srcPos) => {
+      return ids.map(id => {
+        const nbrs = srcIds.filter(s => srcPos[s] !== undefined);
+        const vals = nbrs.map(s => srcPos[s]);
+        return vals.length ? vals.reduce((a, v) => a + v, 0) / vals.length : 0;
+      });
+    };
+    for (let pass = 0; pass < 3; pass++) {
+      // Forward: sort by median of incoming neighbour positions in prev level
+      for (let li = 1; li < levels.length; li++) {
+        const l = levels[li], prevL = levels[li - 1];
+        const prevPos = Object.fromEntries(byLevel[prevL].map((id, i) => [id, i]));
+        byLevel[l].sort((a, b) => {
+          const ma = inEdges[a].filter(s => level[s] === prevL);
+          const mb = inEdges[b].filter(s => level[s] === prevL);
+          const ra = ma.length ? ma.reduce((s, x) => s + (prevPos[x] ?? 0), 0) / ma.length : Infinity;
+          const rb = mb.length ? mb.reduce((s, x) => s + (prevPos[x] ?? 0), 0) / mb.length : Infinity;
+          return ra - rb;
+        });
+      }
+      // Backward: sort by median of outgoing neighbour positions in next level
+      for (let li = levels.length - 2; li >= 0; li--) {
+        const l = levels[li], nextL = levels[li + 1];
+        const nextPos = Object.fromEntries(byLevel[nextL].map((id, i) => [id, i]));
+        byLevel[l].sort((a, b) => {
+          const ma = outEdges[a].filter(t => level[t] === nextL);
+          const mb = outEdges[b].filter(t => level[t] === nextL);
+          const ra = ma.length ? ma.reduce((s, x) => s + (nextPos[x] ?? 0), 0) / ma.length : Infinity;
+          const rb = mb.length ? mb.reduce((s, x) => s + (nextPos[x] ?? 0), 0) / mb.length : Infinity;
+          return ra - rb;
+        });
+      }
+    }
+
+    // ── Node positions ────────────────────────────────────────────────────
+    const numLevels = Math.max(...levels) + 1;
+    const maxPerLvl = Math.max(...Object.values(byLevel).map(v => v.length));
+    const totalH = PAD * 2 + maxPerLvl * NODE_H + (maxPerLvl - 1) * V_GAP;
+    const totalW = PAD * 2 + numLevels * NODE_W + (numLevels - 1) * H_GAP;
+    const pos = {};
+    for (const [l, ids] of Object.entries(byLevel)) {
+      const lNum = Number(l);
+      const colH = ids.length * NODE_H + (ids.length - 1) * V_GAP;
+      const startY = (totalH - colH) / 2;
+      ids.forEach((id, i) => {
+        pos[id] = { x: PAD + lNum * (NODE_W + H_GAP), y: startY + i * (NODE_H + V_GAP) };
+      });
+    }
+
+    // ── Port spreading (each edge gets its own vertical slot on node edge) ─
+    // Sort outgoing edges by target Y → assign ports top-to-bottom on right side
+    // Sort incoming edges by source Y → assign ports top-to-bottom on left side
+    const outPort = {}, inPort = {};    // connection index → y-offset from node centre
+    const nodeOutIdx = {}, nodeInIdx = {};
+    connections.forEach((c, i) => {
+      (nodeOutIdx[c.from] = nodeOutIdx[c.from] || []).push(i);
+      (nodeInIdx[c.to]    = nodeInIdx[c.to]    || []).push(i);
+    });
+    const assignPorts = (nodeIdxMap, getNeighbourY, portMap) => {
+      for (const [nodeId, idxs] of Object.entries(nodeIdxMap)) {
+        idxs.sort((a, b) => getNeighbourY(a) - getNeighbourY(b));
+        const n = idxs.length;
+        const step = n > 1 ? Math.min(13, (NODE_H - 14) / (n - 1)) : 0;
+        const start = -step * (n - 1) / 2;
+        idxs.forEach((ci, i) => { portMap[ci] = start + i * step; });
+      }
+    };
+    assignPorts(nodeOutIdx, i => (pos[connections[i].to]?.y   ?? 0) + NODE_H / 2, outPort);
+    assignPorts(nodeInIdx,  i => (pos[connections[i].from]?.y ?? 0) + NODE_H / 2, inPort);
+
+    // ── SVG defs ──────────────────────────────────────────────────────────
+    const EDGE_CLR = { on_success: '#4ade80', on_failure: '#f87171', always: '#94a3b8' };
+    const ARR_IDS  = ['arr-success', 'arr-fail', 'arr-default'];
+    const ARR_CLRS = ['#4ade80',    '#f87171',  '#94a3b8'];
+    const defs = `<defs>
+      ${ARR_IDS.map((id, i) => `
+        <marker id="${id}" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L7,3 z" fill="${ARR_CLRS[i]}" opacity=".9"/>
+        </marker>`).join('')}
+    </defs>`;
+
+    // ── Edges (orthogonal elbow routing) ─────────────────────────────────
+    // Path: exit right from source port → midpoint column → enter left at target port
+    // If y1 ≈ y2: straight line. Otherwise: right → corner → vertical → corner → right
+    let edges = '';
+    connections.forEach((c, i) => {
+      const pf = pos[c.from], pt = pos[c.to];
+      if (!pf || !pt) return;
+      const x1 = pf.x + NODE_W, y1 = pf.y + NODE_H / 2 + (outPort[i] ?? 0);
+      const x2 = pt.x,          y2 = pt.y + NODE_H / 2 + (inPort[i]  ?? 0);
+      const cond = c.condition || 'always';
+      const clr  = EDGE_CLR[cond] || EDGE_CLR.always;
+      const arrId = cond === 'on_success' ? 'arr-success' : cond === 'on_failure' ? 'arr-fail' : 'arr-default';
+      const lbl  = cond !== 'always' ? cond : '';
+
+      const xm = (x1 + x2) / 2;
+      const r  = 7;
+      let d;
+      if (Math.abs(y2 - y1) < 3) {
+        d = `M${x1},${y1} H${x2}`;
+      } else {
+        const dir = y2 > y1 ? 1 : -1;
+        d = `M${x1},${y1} H${xm - r} Q${xm},${y1} ${xm},${y1 + dir * r} V${y2 - dir * r} Q${xm},${y2} ${xm + r},${y2} H${x2}`;
+      }
+      const opacity = cond === 'always' ? '.45' : '.7';
+
+      // Label: small pill badge at midpoint of vertical segment
+      const lx = xm, ly = (y1 + y2) / 2;
+      edges += `
+        <path d="${d}" fill="none" stroke="${clr}" stroke-width="1.5" opacity="${opacity}" marker-end="url(#${arrId})"/>
+        ${lbl ? `<rect x="${lx - 30}" y="${ly - 9}" width="60" height="16" rx="5" fill="${clr}" opacity=".12"/>
+                 <text x="${lx}" y="${ly + 3.5}" text-anchor="middle" font-size="9" font-weight="600"
+                   fill="${clr}" font-family="inherit" opacity=".9">${esc(lbl)}</text>` : ''}`;
+    });
+
+    // ── Nodes ─────────────────────────────────────────────────────────────
+    let nodes = '';
+    for (const id of connectedIds) {
+      const { x, y } = pos[id];
+      const a      = agentMap[id] || {};
+      const color  = a.color || '#6366f1';
+      const name   = (a.name || id).slice(0, 22);
+      const group  = (a.group || '').slice(0, 18);
+      const outDeg = (outEdges[id] || []).length;
+      const inDg   = (inEdges[id]  || []).length;
+      // Slightly thicker border for hub nodes (high connectivity)
+      const sw     = (outDeg + inDg) >= 4 ? '2' : '1.5';
+      const dot    = a.status === 'busy' ? `<circle cx="${x + NODE_W - 11}" cy="${y + 11}" r="4" fill="#22c55e"/>` : '';
+      nodes += `
+        <g class="tm-node" data-id="${esc(id)}" style="cursor:pointer" onclick="selectAgent('${esc(id)}')">
+          <rect x="${x}" y="${y}" width="${NODE_W}" height="${NODE_H}" rx="10"
+            fill="${color}12" stroke="${color}" stroke-width="${sw}" stroke-opacity=".8"/>
+          <text x="${x + NODE_W / 2}" y="${y + 24}" text-anchor="middle"
+            font-size="12" font-weight="700" fill="${color}" font-family="inherit">${esc(name)}</text>
+          <text x="${x + NODE_W / 2}" y="${y + 40}" text-anchor="middle"
+            font-size="10" fill="#94a3b8" font-family="inherit">${esc(group)}</text>
+          ${dot}
+        </g>`;
+    }
+
+    el.innerHTML = `
+      <svg width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}"
+        style="max-width:100%;overflow:visible;display:block">
+        ${defs}${edges}${nodes}
+      </svg>`;
+
+  } catch {
+    el.innerHTML = `<div class="tm-empty">Could not load team map.</div>`;
+  }
 }
 
 // ── Agent detail ───────────────────────────────────────────────────────────
@@ -679,15 +915,17 @@ async function renderTasks(a) {
               <span class="kanban-col-cnt">${buckets[status].length}</span>
             </div>
             ${buckets[status].map(t => `
-              <div class="kanban-card" data-id="${t.id}">
+              <div class="kanban-card" data-id="${t.id}" data-aid="${aid}">
                 <div class="kanban-card-top">
                   <span class="kanban-id">#${t.id.slice(0,6)}</span>
+                  <button class="kanban-decompose" data-id="${t.id}" data-aid="${aid}" data-title="${esc(t.title||'')}" title="Decompose with Swarm">⚡</button>
                   <button class="kanban-del" data-id="${t.id}">✕</button>
                 </div>
                 <div class="kanban-title">${esc(t.title || 'Untitled')}</div>
                 ${t.description ? `<div class="kanban-desc">${esc(t.description)}</div>` : ''}
                 <div class="kanban-footer">
                   <span class="kanban-priority ${esc(t.priority||'')}">${esc(t.priority||'')}</span>
+                  ${t.swarmChildCount ? `<span class="kanban-swarm">↳ ${t.swarmChildCount} subtasks</span>` : ''}
                   <span class="kanban-time">${relTime(t.updatedAt||t.createdAt)}</span>
                 </div>
               </div>`).join('')}
@@ -695,14 +933,65 @@ async function renderTasks(a) {
       </div>`;
 
     el.addEventListener('click', async e => {
-      const btn = e.target.closest('.kanban-del');
-      if (!btn) return;
-      await storeDel(aid, 'tasks', btn.dataset.id);
-      renderTasks(a);
+      const del = e.target.closest('.kanban-del');
+      if (del) { await storeDel(aid, 'tasks', del.dataset.id); renderTasks(a); return; }
+      const dec = e.target.closest('.kanban-decompose');
+      if (dec) { openDecomposeModal(dec.dataset.aid, dec.dataset.id, dec.dataset.title); }
     }, { once: true });
   }
 
   $('#task-add') && $('#task-add').addEventListener('click', () => openTaskModal(a));
+
+  // Append Linear section if enabled for this agent
+  const integ = _integCache || {};
+  if (a.linearEnabled && integ.linear?.apiKey) {
+    appendLinearSection(el, a, integ);
+  }
+}
+
+async function appendLinearSection(el, a, integ) {
+  const labelName = a.linearLabelName || a.name;
+  const section   = document.createElement('div');
+  section.className = 'agent-linear-section';
+  section.innerHTML = `
+    <div class="agent-linear-header">
+      <span class="linear-badge">Linear</span>
+      <span class="agent-linear-title">Issues tagged "${esc(labelName)}"</span>
+      <span class="agent-linear-count" id="alin-count"></span>
+    </div>
+    <div class="agent-linear-body" id="alin-body">
+      <div class="tab-loading">Loading…</div>
+    </div>`;
+  el.appendChild(section);
+
+  try {
+    const params = new URLSearchParams({ labelName, limit: '50' });
+    if (integ.linear.defaultTeamId) params.set('teamId', integ.linear.defaultTeamId);
+    const r = await fetch(`/api/projects/${S.projectId}/linear/issues?${params}`);
+    if (!r.ok) { const e = await r.json(); throw new Error(e.error || `HTTP ${r.status}`); }
+    const issues  = await r.json();
+    const bodyEl  = section.querySelector('#alin-body');
+    const countEl = section.querySelector('#alin-count');
+    if (countEl) countEl.textContent = issues.length;
+
+    if (!issues.length) {
+      bodyEl.innerHTML = `<div class="agent-linear-empty">No issues with label "${esc(labelName)}"</div>`;
+      return;
+    }
+
+    const STATE_CLR = { completed: '#4ade80', cancelled: '#6b7280', started: '#22d3ee', inProgress: '#22d3ee' };
+    bodyEl.innerHTML = issues.map(issue => `
+      <div class="agent-linear-row">
+        <span class="agent-linear-dot" style="background:${esc(issue.state?.color || '#888')}"></span>
+        <span class="tasks-row-id">${esc(issue.identifier || '')}</span>
+        <span class="agent-linear-row-title">${esc(issue.title || 'Untitled')}</span>
+        ${issue.priorityLabel ? `<span class="tasks-row-pri">${esc(issue.priorityLabel)}</span>` : ''}
+        ${issue.url ? `<a class="agent-linear-link" href="${esc(issue.url)}" target="_blank" rel="noopener">↗</a>` : ''}
+      </div>`).join('');
+  } catch (e) {
+    const bodyEl = section.querySelector('#alin-body');
+    if (bodyEl) bodyEl.innerHTML = `<div class="tasks-error">Error: ${esc(e.message)}</div>`;
+  }
 }
 
 function openTaskModal(a) {
@@ -728,18 +1017,119 @@ function openTaskModal(a) {
   });
 }
 
+// ── Swarm Decomposition ────────────────────────────────────────────────────
+
+function closeSwarmModal() {
+  const el = $('#swarm-modal-overlay');
+  if (el) el.remove();
+}
+
+function openDecomposeModal(agentId, taskId, taskTitle) {
+  closeSwarmModal();
+  const el = document.createElement('div');
+  el.className = 'overlay on';
+  el.id = 'swarm-modal-overlay';
+  el.innerHTML = `
+    <div class="modal swarm-modal">
+      <div class="modal-title">⚡ Decompose Task</div>
+      <div class="swarm-task-title">"${esc(taskTitle || taskId)}"</div>
+      <div class="swarm-log" id="swarm-log"></div>
+      <div class="swarm-result" id="swarm-result"></div>
+      <div class="modal-actions">
+        <button class="btn-cancel" id="swarm-close">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(el);
+  el.addEventListener('click', e => { if (e.target === el) closeSwarmModal(); });
+  $('#swarm-close').addEventListener('click', closeSwarmModal);
+
+  const log = $('#swarm-log');
+  let lastStep = null;
+  function addLog(msg, type = 'step') {
+    if (type === 'step' && lastStep) lastStep.classList.add('swarm-log-done');
+    const line = document.createElement('div');
+    line.className = `swarm-log-row swarm-log-${type}`;
+    const icon = type === 'step' ? '›' : type === 'ok' ? '✓' : '✗';
+    line.innerHTML = `<span class="swarm-log-icon">${icon}</span><span>${esc(msg)}</span>`;
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+    if (type === 'step') lastStep = line;
+    else if (lastStep) { lastStep.classList.add('swarm-log-done'); lastStep = null; }
+  }
+
+  (async () => {
+    try {
+      const res = await fetch(`/api/projects/${S.projectId}/agents/${agentId}/tasks/${taskId}/decompose`, { method: 'POST' });
+      const reader  = res.body.getReader();
+      const decoder = new TextDecoder();
+      let   buffer  = '';
+      let   result  = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const ev = JSON.parse(line.slice(6));
+            if (ev.type === 'progress') addLog(ev.message, 'step');
+            if (ev.type === 'error')    addLog(ev.message, 'err');
+            if (ev.type === 'done')     result = ev.result;
+          } catch {}
+        }
+      }
+
+      if (!result) return;
+      addLog(`${result.subtasks.length} subtasks created`, 'ok');
+
+      const resultEl = $('#swarm-result');
+      if (resultEl) {
+        resultEl.innerHTML = `
+          ${result.analysis ? `<div class="swarm-analysis">${esc(result.analysis)}</div>` : ''}
+          <div class="swarm-subtasks">
+            ${result.subtasks.map((s, i) => `
+              <div class="swarm-subtask">
+                <span class="swarm-order">${i + 1}</span>
+                <span class="swarm-mode-badge ${esc(s.swarmMode || 'sequential')}">${(s.swarmMode || 'seq').slice(0,3)}</span>
+                <div class="swarm-subtask-info">
+                  <div class="swarm-subtask-title">${esc(s.title)}</div>
+                  <div class="swarm-subtask-agent">→ ${esc(s.agentName || s.agentId)}</div>
+                </div>
+              </div>`).join('')}
+          </div>`;
+      }
+
+      const closeBtn = $('#swarm-close');
+      if (closeBtn) closeBtn.textContent = 'Done';
+
+      const agent = AGENT_REGISTRY[agentId];
+      if (agent) setTimeout(() => renderTasks(agent), 300);
+    } catch (err) {
+      addLog('Error: ' + err.message, 'err');
+    }
+  })();
+}
+
 // ── Memories ───────────────────────────────────────────────────────────────
 
 const MEM_KINDS = ['all','persistent','temporary','todo'];
-const MEM_KIND_LABEL = { persistent: 'Persistent', temporary: 'Temporary', todo: 'Todo' };
+const MEM_KIND_LABEL = { rule: 'Rule', persistent: 'Persistent', temporary: 'Temporary', todo: 'Todo' };
 
 async function syncMemoryFile(agentId, memories) {
-  const sections = { persistent: [], temporary: [], todo: [] };
+  const sections = { rule: [], persistent: [], temporary: [], todo: [] };
   for (const m of memories) {
     const k = m.kind || 'persistent';
     (sections[k] || sections.persistent).push(m);
   }
   const lines = ['# Memory\n'];
+  if (sections.rule.length) {
+    lines.push('## Startup Instructions');
+    sections.rule.forEach(m => lines.push(`- ${m.note || m.text || ''}`));
+    lines.push('');
+  }
   if (sections.persistent.length) {
     lines.push('## Persistent');
     sections.persistent.forEach(m => {
@@ -767,8 +1157,9 @@ async function syncMemoryFile(agentId, memories) {
 
 function memSectionKind(heading) {
   const h = heading.toLowerCase();
-  if (/todo|task|action/i.test(h))              return 'todo';
-  if (/temp|short|session|thread|open/i.test(h)) return 'temporary';
+  if (/startup|instruction|rule|always|before/i.test(h)) return 'rule';
+  if (/todo|task|action/i.test(h))                       return 'todo';
+  if (/temp|short|session|thread|open/i.test(h))         return 'temporary';
   return 'persistent';
 }
 
@@ -815,17 +1206,40 @@ async function renderMemories(a) {
   let filter = 'all';
 
   function paint() {
-    const items = filter === 'all' ? all : all.filter(m => m.kind === filter);
+    const rules   = all.filter(m => m.kind === 'rule');
+    const nonRule = filter === 'all'
+      ? all.filter(m => m.kind !== 'rule')
+      : all.filter(m => m.kind === filter);
+
     el.innerHTML = desc + `
+      <div class="mem-rules-section">
+        <div class="mem-rules-header">
+          <span class="mem-rules-icon">⚡</span>
+          <span class="mem-rules-title">Startup Rules</span>
+          <span class="mem-rules-hint">Agent reads these before every session</span>
+        </div>
+        ${rules.length ? `<div class="mem-rules-list">${rules.map(m => `
+          <div class="mem-rule-card" data-id="${m.id}">
+            <span class="mem-rule-text">${esc(m.note || m.text || '')}</span>
+            <button class="mem-del mem-rule-del" data-id="${esc(m.id)}">✕</button>
+          </div>`).join('')}</div>` : `
+          <div class="mem-rules-empty">No startup rules yet.</div>`}
+        <div class="mem-rule-add-row">
+          <input class="mem-rule-input" id="mem-rule-input"
+            placeholder="e.g. Always read /docs/architecture.md before starting" />
+          <button class="mem-rule-add-btn" id="mem-rule-add">+ Add</button>
+        </div>
+      </div>
+
       <div class="store-toolbar">
         <div class="mem-filters">
           ${MEM_KINDS.map(k => `<button class="mem-filter${k===filter?' on':''}" data-kind="${k}">${k==='all'?'All':MEM_KIND_LABEL[k]||k}</button>`).join('')}
         </div>
         <button class="btn-tab-add" id="mem-add">+ Add</button>
       </div>
-      ${!items.length ? `<div class="tab-empty"><div class="tab-empty-icon">◎</div><div class="tab-empty-text">No memories yet</div></div>` : `
+      ${!nonRule.length ? `<div class="tab-empty"><div class="tab-empty-icon">◎</div><div class="tab-empty-text">No memories yet</div></div>` : `
       <div class="mem-list">
-        ${items.map(m => `
+        ${nonRule.map(m => `
           <div class="mem-card" data-id="${m.id}">
             <div class="mem-head">
               <span class="mem-badge ${esc(m.kind||'persistent')}">${esc(MEM_KIND_LABEL[m.kind]||m.kind||'Persistent')}</span>
@@ -845,15 +1259,38 @@ async function renderMemories(a) {
       filter = b.dataset.kind;
       paint();
     }));
+
     el.querySelectorAll('.mem-del').forEach(btn => btn.addEventListener('click', async () => {
       await storeDel(aid, 'memories', btn.dataset.id);
       all = all.filter(m => m.id !== btn.dataset.id);
       await syncMemoryFile(aid, all);
       paint();
     }));
+
     $('#mem-add') && $('#mem-add').addEventListener('click', () => openMemoryModal(a, () => {
       renderMemories(a);
     }));
+
+    const ruleInput = $('#mem-rule-input');
+    const ruleBtn   = $('#mem-rule-add');
+
+    async function addRule() {
+      const note = ruleInput?.value.trim();
+      if (!note) return;
+      ruleInput.value = '';
+      ruleInput.disabled = true;
+      if (ruleBtn) ruleBtn.disabled = true;
+      const item = await storePost(aid, 'memories', { note, kind: 'rule', importance: 1 });
+      all.push(item);
+      await syncMemoryFile(aid, all);
+      ruleInput.disabled = false;
+      if (ruleBtn) ruleBtn.disabled = false;
+      paint();
+      $('#mem-rule-input')?.focus();
+    }
+
+    ruleInput?.addEventListener('keydown', e => { if (e.key === 'Enter') addRule(); });
+    ruleBtn?.addEventListener('click', addRule);
   }
 
   paint();
@@ -865,7 +1302,7 @@ function openMemoryModal(a, onDone) {
     title: 'Add Memory',
     fields: [
       { id: 'mem-m-note', label: 'Note', placeholder: 'What to remember…' },
-      { id: 'mem-m-kind', label: 'Kind', type: 'select', options: ['persistent','temporary','todo'] },
+      { id: 'mem-m-kind', label: 'Kind', type: 'select', options: ['persistent','temporary','todo','rule'] },
       { id: 'mem-m-importance', label: 'Importance (0–1)', placeholder: '0.8' },
     ],
     onSave: async () => {
@@ -1219,12 +1656,13 @@ function openPipelineModal(a, onDone) {
 }
 
 function renderChat(a) {
+  const ac = a.color || '#6366F1';
   $('#tab-chat').innerHTML = tabDescHtml('chat') + `
     <div class="chat-wrap">
       <div class="chat-msgs" id="chat-msgs">
-        <div class="msg agent">
-          <div class="msg-ava" style="background:${a.color}18;color:${a.color};border:1px solid ${a.color}30">${initials(a.name)}</div>
-          <div class="msg-bub">Hello. I'm ${esc(a.name)}. How can I assist?</div>
+        <div class="msg agent" id="chat-intro-msg">
+          <div class="msg-ava" style="background:${ac}18;color:${ac};border:1px solid ${ac}30">${initials(a.name)}</div>
+          <div class="msg-bub" style="color:var(--text-3);font-style:italic">…</div>
         </div>
       </div>
       <div class="chat-foot">
@@ -1233,11 +1671,40 @@ function renderChat(a) {
       </div>
     </div>`;
 
+  fetch(`/api/projects/${S.projectId}/agents/${a.id}/chat/intro`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lang: i18n.lang }),
+  })
+    .then(r => r.json())
+    .then(d => {
+      const introEl = document.getElementById('chat-intro-msg');
+      if (!introEl) return;
+      const bub = introEl.querySelector('.msg-bub');
+      if (d.intro) {
+        bub.textContent = d.intro;
+        bub.style.cssText = '';
+      } else {
+        bub.textContent = d.error || 'Failed to load introduction';
+        bub.style.color = '#ef4444';
+        bub.style.fontStyle = 'italic';
+      }
+    })
+    .catch(err => {
+      const introEl = document.getElementById('chat-intro-msg');
+      if (introEl) {
+        const bub = introEl.querySelector('.msg-bub');
+        bub.textContent = `Error: ${err.message}`;
+        bub.style.color = '#ef4444';
+        bub.style.fontStyle = 'italic';
+      }
+    });
+
   const input = $('#chat-in'), btn = $('#chat-send'), msgs = $('#chat-msgs');
 
-  function send() {
+  async function send() {
     const text = input.value.trim();
-    if (!text) return;
+    if (!text || btn.disabled) return;
     msgs.insertAdjacentHTML('beforeend', `
       <div class="msg you">
         <div class="msg-ava" style="background:var(--text);color:var(--bg-card)">YU</div>
@@ -1245,14 +1712,47 @@ function renderChat(a) {
       </div>`);
     input.value = '';
     msgs.scrollTop = msgs.scrollHeight;
-    setTimeout(() => {
-      msgs.insertAdjacentHTML('beforeend', `
-        <div class="msg agent">
-          <div class="msg-ava" style="background:${a.color}18;color:${a.color};border:1px solid ${a.color}30">${initials(a.name)}</div>
-          <div class="msg-bub" style="color:var(--text-3);font-style:italic">Processing… (connect Legion API for real responses)</div>
-        </div>`);
+
+    const thinkingId = `thinking-${Date.now()}`;
+    msgs.insertAdjacentHTML('beforeend', `
+      <div class="msg agent" id="${thinkingId}">
+        <div class="msg-ava" style="background:${ac}18;color:${ac};border:1px solid ${ac}30">${initials(a.name)}</div>
+        <div class="msg-bub" style="color:var(--text-3);font-style:italic">Thinking…</div>
+      </div>`);
+    msgs.scrollTop = msgs.scrollHeight;
+    btn.disabled = true;
+
+    try {
+      const r = await fetch(`/api/projects/${S.projectId}/agents/${a.id}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, lang: i18n.lang }),
+      });
+      const d = await r.json();
+      const el = document.getElementById(thinkingId);
+      if (el) {
+        const bub = el.querySelector('.msg-bub');
+        if (d.reply) {
+          bub.textContent = d.reply;
+          bub.style.cssText = '';
+        } else {
+          bub.textContent = d.error || 'No response';
+          bub.style.color = '#ef4444';
+          bub.style.fontStyle = 'italic';
+        }
+      }
+    } catch (err) {
+      const el = document.getElementById(thinkingId);
+      if (el) {
+        const bub = el.querySelector('.msg-bub');
+        bub.textContent = `Error: ${err.message}`;
+        bub.style.color = '#ef4444';
+        bub.style.fontStyle = 'italic';
+      }
+    } finally {
+      btn.disabled = false;
       msgs.scrollTop = msgs.scrollHeight;
-    }, 500);
+    }
   }
 
   btn.addEventListener('click', send);
@@ -1269,12 +1769,19 @@ async function renderSkills(a) {
 
   el.innerHTML = `
     ${tabDescHtml('skills')}
-    <div class="sk-section-label">${i18n.t('sk_installed_label')}</div>
+    <div class="sk-section-header" id="sk-head-installed">
+      <span class="sk-section-caret">▾</span>
+      <span>${i18n.t('sk_installed_label')}</span>
+    </div>
     <div id="sk-installed">${i18n.t('sk_loading')}</div>
-    <div class="sk-section-label sk-section-label-mt">${i18n.t('sk_available_label')}</div>
-    <div id="sk-available">${i18n.t('sk_loading')}</div>
-    <div class="sk-section-label sk-section-label-mt">
-      ${i18n.t('sk_suggest_label')}
+    <div class="sk-section-header sk-section-header-mt sk-collapsed" id="sk-head-available">
+      <span class="sk-section-caret">▸</span>
+      <span>${i18n.t('sk_available_label')}</span>
+    </div>
+    <div id="sk-available" style="display:none"></div>
+    <div class="sk-section-header sk-section-header-mt" id="sk-head-suggest">
+      <span class="sk-section-caret">▾</span>
+      <span>${i18n.t('sk_suggest_label')}</span>
       <button class="sk-suggest-btn" id="sk-suggest">✦ ${i18n.t('sk_suggest')}</button>
     </div>
     <div id="sk-log" class="sk-log" style="display:none"></div>
@@ -1292,69 +1799,91 @@ async function renderSkills(a) {
   }
 
   async function refreshSkillLists() {
-    const [skillsRes, availRes] = await Promise.all([
-      fetch(`/api/projects/${S.projectId}/skills`),
-      fetch(`/api/skills/available`),
-    ]);
-    const skills   = await skillsRes.json();   // [{id, global, project}]
-    const available = await availRes.json();    // [{id, description, global}]
-    const descMap  = Object.fromEntries(available.map(s => [s.id, s.description]));
-
     const installedEl = $('#sk-installed');
-    if (!installedEl) return;
-
-    const activeSkills = skills.filter(s => s.global || s.project);
-    if (!activeSkills.length) {
-      installedEl.innerHTML = `<div class="sk-empty">${i18n.t('sk_no_installed')}</div>`;
-    } else {
-      installedEl.innerHTML = `<div class="sk-pill-list">${activeSkills.map(s => {
-        const badge = s.global && s.project
-          ? `<span class="sk-badge sk-badge-both">${i18n.t('sk_badge_both')}</span>`
-          : s.global
-            ? `<span class="sk-badge sk-badge-global">${i18n.t('sk_badge_global')}</span>`
-            : `<span class="sk-badge sk-badge-project">${i18n.t('sk_badge_project')}</span>`;
-        const removeBtn = s.project && !s.global
-          ? `<button class="sk-pill-remove" data-skill="${esc(s.id)}">✕</button>`
-          : '';
-        return `<div class="sk-pill">
-          <span class="sk-pill-name">⚡ ${esc(s.id)}</span>
-          ${badge}${removeBtn}
-        </div>`;
-      }).join('')}</div>`;
-      installedEl.querySelectorAll('.sk-pill-remove').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          btn.textContent = '…';
-          await fetch(`/api/projects/${S.projectId}/skills/${btn.dataset.skill}`, { method: 'DELETE' });
-          refreshSkillLists();
-        });
-      });
-    }
-
-    // Available section: skills NOT yet in project or global
-    const installedIds = new Set(skills.map(s => s.id));
     const availableEl = $('#sk-available');
-    if (!availableEl) return;
-    const notInstalled = available.filter(s => !installedIds.has(s.id));
-    if (!notInstalled.length) {
-      availableEl.innerHTML = `<div class="sk-empty">${i18n.t('sk_no_available')}</div>`;
-    } else {
-      availableEl.innerHTML = `<div class="sk-avail-list">${notInstalled.map(s =>
-        `<div class="sk-avail-row">
-          <span class="sk-avail-name">⚡ ${esc(s.id)}</span>
-          ${descMap[s.id] ? `<span class="sk-avail-desc">${esc(descMap[s.id])}</span>` : ''}
-          <button class="sk-avail-add" data-skill="${esc(s.id)}">${i18n.t('sk_add')}</button>
-        </div>`).join('')}</div>`;
-      availableEl.querySelectorAll('.sk-avail-add').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          btn.textContent = '…'; btn.disabled = true;
-          await fetch(`/api/projects/${S.projectId}/skills/${btn.dataset.skill}`, { method: 'POST' });
-          refreshSkillLists();
+    try {
+      const [agentSkillsRes, globalSkillsRes] = await Promise.all([
+        fetch(`/api/projects/${S.projectId}/agents/${a.id}/skills`),
+        fetch(`/api/skills/available`),
+      ]);
+      const agentSkills = await agentSkillsRes.json();  // ["skill-id", ...]
+      const available   = await globalSkillsRes.json(); // [{id, description}, ...]
+      if (!Array.isArray(agentSkills) || !Array.isArray(available))
+        throw new Error(agentSkills.error || available.error || 'Invalid response');
+
+      const descMap     = Object.fromEntries(available.map(s => [s.id, s.description]));
+      const agentSkillSet = new Set(agentSkills);
+
+      // Installed: skills assigned to THIS agent
+      if (!installedEl) return;
+      if (!agentSkills.length) {
+        installedEl.innerHTML = `<div class="sk-empty">${i18n.t('sk_no_installed')}</div>`;
+      } else {
+        installedEl.innerHTML = `<div class="sk-pill-list">${agentSkills.map(id => `
+          <div class="sk-pill">
+            <span class="sk-pill-name">⚡ ${esc(id)}</span>
+            ${descMap[id] ? `<span class="sk-avail-desc">${esc(descMap[id])}</span>` : ''}
+            <button class="sk-pill-remove" data-skill="${esc(id)}">✕</button>
+          </div>`).join('')}</div>`;
+        installedEl.querySelectorAll('.sk-pill-remove').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            btn.textContent = '…';
+            await fetch(`/api/projects/${S.projectId}/agents/${a.id}/skills/${btn.dataset.skill}`, { method: 'DELETE' });
+            refreshSkillLists();
+          });
         });
-      });
+      }
+
+      // Available: user skills NOT yet assigned to this agent — card layout
+      if (!availableEl) return;
+      const notAssigned = available.filter(s => !agentSkillSet.has(s.id));
+      if (!notAssigned.length) {
+        availableEl.innerHTML = `<div class="sk-empty">${i18n.t('sk_no_available')}</div>`;
+      } else {
+        availableEl.innerHTML = `<div class="sk-list">${notAssigned.map(s =>
+          `<div class="sk-card">
+            <div class="sk-card-head">
+              <span class="sk-type-icon">⚡</span>
+              <span class="sk-card-name">${esc(s.id)}</span>
+            </div>
+            ${s.description ? `<div class="sk-card-reason">${esc(s.description)}</div>` : ''}
+            <div class="sk-card-foot">
+              <button class="sk-avail-add" data-skill="${esc(s.id)}">${i18n.t('sk_add')}</button>
+            </div>
+          </div>`).join('')}</div>`;
+        availableEl.querySelectorAll('.sk-avail-add').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            btn.textContent = '…'; btn.disabled = true;
+            await fetch(`/api/projects/${S.projectId}/agents/${a.id}/skills/${btn.dataset.skill}`, { method: 'POST' });
+            refreshSkillLists();
+          });
+        });
+      }
+    } catch (err) {
+      console.error('[skills]', err);
+      if (installedEl) installedEl.innerHTML = `<div class="sk-empty">⚠ ${esc(err.message)}</div>`;
+      if (availableEl) availableEl.innerHTML = '';
     }
   }
 
   refreshSkillLists();
+
+  // Section toggle logic
+  function setupSkToggle(headId, contentId, startCollapsed) {
+    const head    = $(`#${headId}`);
+    const content = $(`#${contentId}`);
+    if (!head || !content) return;
+    let collapsed = startCollapsed;
+    head.addEventListener('click', e => {
+      if (e.target.closest('.sk-suggest-btn')) return;
+      collapsed = !collapsed;
+      content.style.display = collapsed ? 'none' : '';
+      head.querySelector('.sk-section-caret').textContent = collapsed ? '▸' : '▾';
+      head.classList.toggle('sk-collapsed', collapsed);
+    });
+  }
+  setupSkToggle('sk-head-installed', 'sk-installed', false);
+  setupSkToggle('sk-head-available', 'sk-available', true);
 
   let es = null;
 
@@ -1390,6 +1919,10 @@ async function renderSkills(a) {
 
         results.innerHTML = `
           ${r.summary ? `<div class="sk-summary">${esc(r.summary)}</div>` : ''}
+          <div class="sk-results-head">
+            <span class="sk-results-count">${r.skills.length} ${r.skills.length === 1 ? 'skill' : 'skills'} recommended</span>
+            <button class="sk-assign-all-btn" id="sk-assign-all">${i18n.t('sk_assign_all')}</button>
+          </div>
           <div class="sk-list">
             ${r.skills.map(s => `
               <div class="sk-card">
@@ -1404,9 +1937,33 @@ async function renderSkills(a) {
                 <div class="sk-card-foot">
                   ${s.install ? `<code class="sk-install">${esc(s.install)}</code>` : ''}
                   ${s.url ? `<a class="sk-link" href="${esc(s.url)}" target="_blank">↗ Open</a>` : ''}
+                  <button class="sk-avail-add sk-card-assign" data-skill="${esc(s.name)}">${i18n.t('sk_assign')}</button>
                 </div>
               </div>`).join('')}
           </div>`;
+
+        // Individual assign buttons
+        results.querySelectorAll('.sk-card-assign').forEach(assignBtn => {
+          assignBtn.addEventListener('click', async () => {
+            assignBtn.textContent = '…'; assignBtn.disabled = true;
+            const res = await fetch(`/api/projects/${S.projectId}/agents/${a.id}/skills/${assignBtn.dataset.skill}`, { method: 'POST' });
+            if (res.ok) { assignBtn.textContent = '✓'; refreshSkillLists(); }
+            else { assignBtn.textContent = '✗'; assignBtn.disabled = false; }
+          });
+        });
+
+        // Assign All button
+        $('#sk-assign-all').addEventListener('click', async () => {
+          const allBtn = $('#sk-assign-all');
+          allBtn.textContent = '…'; allBtn.disabled = true;
+          results.querySelectorAll('.sk-card-assign').forEach(b => { b.disabled = true; });
+          await Promise.all(r.skills.map(s =>
+            fetch(`/api/projects/${S.projectId}/agents/${a.id}/skills/${s.name}`, { method: 'POST' })
+          ));
+          results.querySelectorAll('.sk-card-assign').forEach(b => { b.textContent = '✓'; });
+          allBtn.textContent = i18n.t('sk_all_assigned');
+          refreshSkillLists();
+        });
       }
 
       if (d.type === 'error') {
@@ -1457,8 +2014,34 @@ function renderConfig(a) {
           ${modelOptions}
         </select>
         <button class="btn-cfg-save" id="cfg-model-save">Save</button>
+        ${hasPath ? `<button class="btn-cfg-activate" id="cfg-model-activate" title="Write this model to .claude/settings.json so Claude Code uses it">⚡ Activate in Claude Code</button>` : ''}
       </div>
       ${!MODELS.length ? `<div class="cfg-hint">Add models in Settings → Models first</div>` : ''}
+      ${hasPath ? `<div class="cfg-hint" id="cfg-activate-status"></div>` : ''}
+    </div>
+
+    <div class="cfg-section">
+      <div class="cfg-section-label">Task Source</div>
+      <div class="cfg-task-source-row">
+        <label class="cfg-toggle-label">
+          <input type="checkbox" id="cfg-linear-toggle" ${a.linearEnabled ? 'checked' : ''} />
+          <span>Use Linear as task source</span>
+        </label>
+      </div>
+      <div id="cfg-linear-fields" ${!a.linearEnabled ? 'style="display:none"' : ''}>
+        <div class="cfg-linear-team-row">
+          <input class="field-input" id="cfg-linear-label-name" type="text"
+            value="${esc(a.linearLabelName || a.name || '')}" placeholder="Label name in Linear (default = agent name)" />
+        </div>
+        <div class="cfg-linear-team-row">
+          <input class="field-input" id="cfg-linear-team-id" type="text"
+            value="${esc(a.linearTeamId || '')}" placeholder="Team ID (leave empty for project default)" />
+        </div>
+        <div style="display:flex;justify-content:flex-end;margin-top:4px">
+          <button class="btn-cfg-save" id="cfg-linear-save">Save</button>
+        </div>
+      </div>
+      <div class="cfg-hint">Configure Linear API key in <b>Settings → Integrations</b>.</div>
     </div>
 
     ${hasPath ? `
@@ -1500,6 +2083,65 @@ function renderConfig(a) {
       body: JSON.stringify(a) });
     const btn = $('#cfg-model-save');
     btn.textContent = 'Saved ✓'; setTimeout(() => btn.textContent = 'Save', 1500);
+  });
+
+  // Activate in Claude Code — writes model to .claude/settings.json
+  if (hasPath) {
+    $('#cfg-model-activate').addEventListener('click', async () => {
+      const activateBtn = $('#cfg-model-activate');
+      const statusEl    = $('#cfg-activate-status');
+      const modelId     = $('#cfg-model-sel').value;
+
+      // First save the model to agent config
+      a.model = modelId;
+      const map = (PROJECT_AGENTS[S.projectId] || []);
+      const idx = map.findIndex(x => x.id === a.id);
+      if (idx >= 0) { map[idx] = { ...map[idx], model: modelId }; a = map[idx]; }
+      await fetch(`/api/projects/${S.projectId}/agents`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(a) });
+
+      // Then activate — write to .claude/settings.json
+      activateBtn.textContent = '…';
+      try {
+        const r = await fetch(`/api/projects/${S.projectId}/agents/${a.id}/activate`, { method: 'POST' });
+        const d = await r.json();
+        if (d.ok) {
+          activateBtn.textContent = '⚡ Activate in Claude Code';
+          statusEl.textContent = d.model
+            ? `✓ Claude Code will use ${d.model} for this project`
+            : '✓ Claude Code will use the default model';
+          statusEl.style.color = 'var(--accent)';
+        } else {
+          throw new Error(d.error || 'Failed');
+        }
+      } catch (err) {
+        activateBtn.textContent = '⚡ Activate in Claude Code';
+        statusEl.textContent = `✗ ${err.message}`;
+        statusEl.style.color = '#ef4444';
+      }
+    });
+  }
+
+  // Linear task source toggle
+  const linearToggle = $('#cfg-linear-toggle');
+  const linearFields = $('#cfg-linear-fields');
+  if (linearToggle) {
+    linearToggle.addEventListener('change', () => {
+      if (linearFields) linearFields.style.display = linearToggle.checked ? '' : 'none';
+    });
+  }
+  $('#cfg-linear-save')?.addEventListener('click', async () => {
+    const btn       = $('#cfg-linear-save');
+    const enabled   = $('#cfg-linear-toggle')?.checked || false;
+    const labelName = $('#cfg-linear-label-name')?.value.trim() || '';
+    const teamId    = $('#cfg-linear-team-id')?.value.trim() || '';
+    const map = (PROJECT_AGENTS[S.projectId] || []);
+    const idx = map.findIndex(x => x.id === a.id);
+    if (idx >= 0) { map[idx] = { ...map[idx], linearEnabled: enabled, linearLabelName: labelName, linearTeamId: teamId }; a = map[idx]; }
+    await fetch(`/api/projects/${S.projectId}/agents`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(a) });
+    if (btn) { btn.textContent = 'Saved ✓'; setTimeout(() => { btn.textContent = 'Save'; }, 1500); }
   });
 
   if (!hasPath) return;
@@ -1985,6 +2627,485 @@ function showOverview() {
 function showAnalyze() {
   showView('view-analyze');
   renderAnalyze();
+}
+
+// ── Tasks view ─────────────────────────────────────────────────────────────
+
+let _currentTaskSrc = 'local';
+
+function showTasks() {
+  showView('view-tasks');
+  _currentTaskSrc = 'local';
+  $$('.tasks-src-btn').forEach(b => b.classList.toggle('on', b.dataset.src === 'local'));
+  renderProjectTasks('local');
+}
+
+async function renderProjectTasks(src) {
+  if (!S.projectId) return;
+  _currentTaskSrc = src;
+  const body = $('#tasks-body');
+  if (!body) return;
+  body.innerHTML = '<div class="tasks-loading">Loading…</div>';
+
+  try {
+    if (src === 'local') {
+      const r = await fetch(`/api/projects/${S.projectId}/tasks`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const tasks = await r.json();
+
+      if (!tasks.length) {
+        body.innerHTML = '<div class="tasks-empty">No tasks yet — add tasks to your agents.</div>';
+        return;
+      }
+
+      const STATUSES   = ['in-progress', 'backlog', 'done', 'cancelled'];
+      const STATUS_LBL = { 'in-progress': 'In Progress', backlog: 'Backlog', done: 'Done', cancelled: 'Cancelled' };
+      const grouped    = {};
+      for (const t of tasks) {
+        const s = t.status || 'backlog';
+        (grouped[s] = grouped[s] || []).push(t);
+      }
+
+      let html = '';
+      for (const s of STATUSES) {
+        const items = grouped[s];
+        if (!items?.length) continue;
+        html += `<div class="tasks-group">
+          <div class="tasks-group-header">
+            <span class="tasks-group-dot tasks-dot-${esc(s)}"></span>
+            <span class="tasks-group-label">${STATUS_LBL[s] || s}</span>
+            <span class="tasks-group-count">${items.length}</span>
+          </div>
+          <div class="tasks-group-body">
+            ${items.map(t => `
+              <div class="tasks-row" data-id="${esc(t.id)}" data-aid="${esc(t.agentId)}">
+                <span class="tasks-row-title">${esc(t.title || 'Untitled')}</span>
+                <span class="tasks-row-agent">${esc(t.agentEmoji || '🤖')} ${esc(t.agentName || '')}</span>
+                ${t.priority ? `<span class="tasks-row-pri tasks-pri-${esc(t.priority)}">${esc(t.priority)}</span>` : ''}
+                ${t.swarmId ? `<span class="tasks-row-swarm" title="Swarm task">⚡</span>` : ''}
+              </div>
+            `).join('')}
+          </div>
+        </div>`;
+      }
+      body.innerHTML = html || '<div class="tasks-empty">No tasks found.</div>';
+
+      $$('.tasks-row', body).forEach(row => {
+        row.addEventListener('click', () => {
+          const aid   = row.dataset.aid;
+          const agent = (PROJECT_AGENTS[S.projectId] || []).find(a => a.id === aid);
+          if (!agent) return;
+          S.agentId = aid;
+          renderTree();
+          showAgent(agent);
+          setTimeout(() => { $('[data-tab="tasks"].a-tab')?.click(); }, 80);
+        });
+      });
+
+    } else if (src === 'linear') {
+      const integ = await fetchIntegrations();
+      if (!integ.linear?.apiKey) {
+        body.innerHTML = `<div class="tasks-empty">Linear not configured. Go to <b>Settings → Integrations</b> to add your API key.</div>`;
+        return;
+      }
+      const r = await fetch(`/api/projects/${S.projectId}/linear/issues`);
+      if (!r.ok) { const e = await r.json(); throw new Error(e.error || `HTTP ${r.status}`); }
+      const issues = await r.json();
+
+      if (!issues.length) {
+        body.innerHTML = '<div class="tasks-empty">No Linear issues found.</div>';
+        return;
+      }
+
+      const STATE_ORDER = ['started', 'inProgress', 'unstarted', 'backlog', 'completed', 'cancelled', 'triage'];
+      const STATE_LBL   = { started: 'In Progress', inProgress: 'In Progress', unstarted: 'Todo', backlog: 'Backlog', completed: 'Done', cancelled: 'Cancelled', triage: 'Triage' };
+      const grouped     = {};
+      for (const issue of issues) {
+        const st = issue.state?.type || 'backlog';
+        (grouped[st] = grouped[st] || []).push(issue);
+      }
+      const allStates = [...new Set([...STATE_ORDER, ...Object.keys(grouped)])];
+      const agents     = PROJECT_AGENTS[S.projectId] || [];
+      const agentLabels = integ.agentLabels || [];
+
+      // Determine current agent assignment per issue
+      const getIssueAgent = (issue) => {
+        for (const lbl of (issue.labels?.nodes || [])) {
+          const al = agentLabels.find(x => x.labelId === lbl.id);
+          if (al) return al;
+        }
+        return null;
+      };
+
+      let html = `<div class="tasks-linear-toolbar">
+        <span class="tasks-linear-count">${issues.length} issue${issues.length !== 1 ? 's' : ''}</span>
+        <button class="btn-assign-tags" id="btn-manage-assign">⚙ Manage Assignments</button>
+      </div>`;
+
+      for (const st of allStates) {
+        const items = grouped[st];
+        if (!items?.length) continue;
+        html += `<div class="tasks-group">
+          <div class="tasks-group-header">
+            <span class="tasks-group-dot" style="background:${esc(items[0].state?.color || '#888')}"></span>
+            <span class="tasks-group-label">${STATE_LBL[st] || st}</span>
+            <span class="tasks-group-count">${items.length}</span>
+          </div>
+          <div class="tasks-group-body">
+            ${items.map(issue => {
+              const assigned = getIssueAgent(issue);
+              const agentName = assigned ? (agents.find(a => a.id === assigned.agentId)?.name || assigned.agentName || '') : '';
+              return `
+              <div class="tasks-row linear-issue">
+                <span class="tasks-row-id">${esc(issue.identifier || '')}</span>
+                <span class="tasks-row-title">${esc(issue.title || 'Untitled')}</span>
+                ${agentName ? `<span class="tasks-row-assigned">→ ${esc(agentName)}</span>` : '<span class="tasks-row-unassigned">unassigned</span>'}
+                <span class="linear-badge">Linear</span>
+                ${issue.priorityLabel ? `<span class="tasks-row-pri">${esc(issue.priorityLabel)}</span>` : ''}
+              </div>`;
+            }).join('')}
+          </div>
+        </div>`;
+      }
+      body.innerHTML = html;
+
+      $('#btn-manage-assign')?.addEventListener('click', () => openAssignmentPanel(issues, integ));
+    }
+  } catch (e) {
+    body.innerHTML = `<div class="tasks-error">Failed to load: ${esc(e.message)}</div>`;
+  }
+}
+
+// ── Assignment Panel ───────────────────────────────────────────────────────
+
+let _assignPending = {}; // issueId → agentId (pending changes)
+
+function closeAssignmentPanel() {
+  const el = $('#assign-panel-overlay');
+  if (el) el.remove();
+  _assignPending = {};
+}
+
+function openAssignmentPanel(issues, integ) {
+  closeAssignmentPanel();
+  const agents     = PROJECT_AGENTS[S.projectId] || [];
+  const agentLabels = integ.agentLabels || [];
+
+  const getIssueAgent = (issue) => {
+    for (const lbl of (issue.labels?.nodes || [])) {
+      const al = agentLabels.find(x => x.labelId === lbl.id);
+      if (al) return al.agentId;
+    }
+    return '';
+  };
+
+  const agentOpts = agents.map(a =>
+    `<option value="${esc(a.id)}">${esc(a.linearLabelName || a.name)}</option>`
+  ).join('');
+
+  const rows = issues.map(issue => {
+    const cur = getIssueAgent(issue);
+    return `
+      <tr class="assign-row" data-issue-id="${esc(issue.id)}">
+        <td class="assign-id">${esc(issue.identifier || '')}</td>
+        <td class="assign-title">${esc(issue.title || 'Untitled')}</td>
+        <td class="assign-agent-cell">
+          <select class="assign-agent-sel field-input" data-issue-id="${esc(issue.id)}">
+            <option value="">— Unassigned —</option>
+            ${agentOpts}
+          </select>
+        </td>
+      </tr>`;
+  }).join('');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay on';
+  overlay.id = 'assign-panel-overlay';
+  overlay.innerHTML = `
+    <div class="modal assign-modal">
+      <div class="assign-modal-head">
+        <div class="modal-title">Manage Assignments</div>
+        <div class="assign-modal-actions">
+          <button class="btn-assign-ai" id="btn-auto-assign">⚡ AI Auto-assign</button>
+          <button class="btn-assign-apply" id="btn-apply-assign" disabled>Apply to Linear</button>
+          <button class="btn-cancel" id="btn-close-assign">Cancel</button>
+        </div>
+      </div>
+      <div class="assign-ai-log" id="assign-ai-log" style="display:none"></div>
+      <div class="assign-table-wrap">
+        <table class="assign-table">
+          <thead><tr>
+            <th>ID</th><th>Issue</th><th>Assign to Agent</th>
+          </tr></thead>
+          <tbody id="assign-tbody">${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  // Pre-fill current assignments
+  for (const issue of issues) {
+    const cur = getIssueAgent(issue);
+    const sel = overlay.querySelector(`select[data-issue-id="${issue.id}"]`);
+    if (sel && cur) sel.value = cur;
+  }
+
+  // Track changes
+  overlay.querySelectorAll('.assign-agent-sel').forEach(sel => {
+    sel.addEventListener('change', () => {
+      _assignPending[sel.dataset.issueId] = sel.value;
+      $('#btn-apply-assign').disabled = Object.keys(_assignPending).length === 0;
+    });
+  });
+
+  $('#btn-close-assign').addEventListener('click', closeAssignmentPanel);
+  overlay.addEventListener('click', e => { if (e.target === overlay) closeAssignmentPanel(); });
+
+  // AI auto-assign
+  $('#btn-auto-assign').addEventListener('click', () => runAutoAssign(issues, agents, overlay));
+
+  // Apply to Linear
+  $('#btn-apply-assign').addEventListener('click', () => applyAssignments(issues, integ, overlay));
+}
+
+async function runAutoAssign(issues, agents, overlay) {
+  const btn    = overlay.querySelector('#btn-auto-assign');
+  const logEl  = overlay.querySelector('#assign-ai-log');
+  btn.disabled = true; btn.textContent = '…';
+  logEl.style.display = '';
+  logEl.innerHTML = '<div class="assign-log-row">Starting AI analysis…</div>';
+
+  try {
+    const es = new EventSource(`/api/projects/${S.projectId}/linear/auto-assign`);
+    // SSE needs POST, so use fetch + manual SSE decode
+    es.close();
+
+    const r = await fetch(`/api/projects/${S.projectId}/linear/auto-assign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ issues }),
+    });
+
+    const reader = r.body.getReader();
+    const dec    = new TextDecoder();
+    let   buf    = '';
+    let   result = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        try {
+          const d = JSON.parse(line.slice(5).trim());
+          if (d.type === 'progress') {
+            logEl.innerHTML += `<div class="assign-log-row">${esc(d.message)}</div>`;
+            logEl.scrollTop = logEl.scrollHeight;
+          }
+          if (d.type === 'done')  result = d.result;
+          if (d.type === 'error') { logEl.innerHTML += `<div class="assign-log-row assign-log-err">${esc(d.message)}</div>`; }
+        } catch {}
+      }
+    }
+
+    if (result?.assignments?.length) {
+      let applied = 0;
+      for (const asgn of result.assignments) {
+        const sel = overlay.querySelector(`select[data-issue-id="${asgn.issueId}"]`);
+        if (sel && asgn.agentId) {
+          sel.value = asgn.agentId;
+          if (sel.value === asgn.agentId) {
+            _assignPending[asgn.issueId] = asgn.agentId;
+            applied++;
+          }
+        }
+      }
+      logEl.innerHTML += `<div class="assign-log-row assign-log-ok">✓ ${applied} assignments suggested — review and click "Apply to Linear"</div>`;
+      $('#btn-apply-assign').disabled = applied === 0;
+    }
+  } catch (e) {
+    logEl.innerHTML += `<div class="assign-log-row assign-log-err">Error: ${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false; btn.textContent = '⚡ AI Auto-assign';
+  }
+}
+
+async function applyAssignments(issues, integ, overlay) {
+  const btn      = overlay.querySelector('#btn-apply-assign');
+  const logEl    = overlay.querySelector('#assign-ai-log');
+  const agents   = PROJECT_AGENTS[S.projectId] || [];
+  const agentLabelsCurrent = integ.agentLabels || [];
+  logEl.style.display = '';
+  btn.disabled = true; btn.textContent = 'Applying…';
+
+  const log = (msg, cls = '') => {
+    logEl.innerHTML += `<div class="assign-log-row ${cls}">${esc(msg)}</div>`;
+    logEl.scrollTop = logEl.scrollHeight;
+  };
+
+  try {
+    // Collect all agent label IDs (to remove them before adding new one)
+    const allAgentLabelIds = agentLabelsCurrent.map(x => x.labelId);
+    const teamId = integ.linear?.defaultTeamId || '';
+    let changed = 0;
+
+    for (const [issueId, agentId] of Object.entries(_assignPending)) {
+      if (!agentId) continue;
+      const agent  = agents.find(a => a.id === agentId);
+      if (!agent) continue;
+      const lName  = agent.linearLabelName || agent.name;
+
+      // Check if label exists
+      let labelEntry = agentLabelsCurrent.find(x => x.agentId === agentId);
+      if (!labelEntry) {
+        log(`Creating label "${lName}" in Linear…`);
+        const cr = await fetch(`/api/projects/${S.projectId}/linear/labels`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: lName, color: agent.color || '#94A3B8', teamId, agentId }),
+        });
+        if (!cr.ok) { const e = await cr.json(); log(`✗ Failed to create label: ${e.error}`, 'assign-log-err'); continue; }
+        const newLabel = await cr.json();
+        labelEntry = { agentId, labelId: newLabel.id, labelName: newLabel.name };
+        agentLabelsCurrent.push(labelEntry);
+        allAgentLabelIds.push(newLabel.id);
+        // Refresh cache
+        _integCache = { ..._integCache, agentLabels: agentLabelsCurrent };
+      }
+
+      // Compute new label list for this issue: keep non-agent labels + add this agent's label
+      const issue = issues.find(i => i.id === issueId);
+      const curLabels = (issue?.labels?.nodes || []).map(l => l.id);
+      const newLabels = [...curLabels.filter(id => !allAgentLabelIds.includes(id)), labelEntry.labelId];
+
+      log(`Assigning "${lName}" → ${issue?.identifier || issueId}…`);
+      const pr = await fetch(`/api/projects/${S.projectId}/linear/issues/${issueId}/labels`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ labelIds: newLabels }),
+      });
+      if (!pr.ok) { const e = await pr.json(); log(`✗ ${e.error}`, 'assign-log-err'); continue; }
+      changed++;
+    }
+
+    log(`✓ Applied ${changed} assignment${changed !== 1 ? 's' : ''}`, 'assign-log-ok');
+    _assignPending = {};
+    btn.textContent = '✓ Done';
+    setTimeout(() => { closeAssignmentPanel(); renderProjectTasks('linear'); }, 1500);
+  } catch (e) {
+    log(`Error: ${e.message}`, 'assign-log-err');
+    btn.disabled = false; btn.textContent = 'Apply to Linear';
+  }
+}
+
+// ── Integrations ───────────────────────────────────────────────────────────
+
+let _integCache = null;
+
+async function fetchIntegrations() {
+  if (!S.projectId) return {};
+  try {
+    const r = await fetch(`/api/projects/${S.projectId}/integrations`);
+    if (!r.ok) return {};
+    _integCache = await r.json();
+    return _integCache;
+  } catch { return {}; }
+}
+
+async function renderIntegrations() {
+  const el = $('#stab-integrations');
+  if (!el) return;
+  if (!S.projectId) {
+    el.innerHTML = '<div class="integ-empty">Select a project to manage integrations.</div>';
+    return;
+  }
+  el.innerHTML = '<div class="cfg-hint">Loading…</div>';
+
+  const integ  = await fetchIntegrations();
+  const linear = integ.linear || {};
+
+  el.innerHTML = `
+    <div class="integ-card" id="integ-linear">
+      <div class="integ-card-head">
+        <div class="integ-card-info">
+          <div class="integ-card-icon">◈</div>
+          <div>
+            <div class="integ-card-name">Linear</div>
+            <div class="integ-card-desc">Pull issues as tasks and sync agent work</div>
+          </div>
+        </div>
+        <div class="integ-status${linear.apiKey ? ' integ-status-on' : ''}">${linear.apiKey ? '● Connected' : '○ Not configured'}</div>
+      </div>
+      <div class="integ-card-body">
+        <div class="field">
+          <label class="field-label">API Key</label>
+          <input class="field-input field-mono" id="integ-linear-key" type="password"
+            value="${esc(linear.apiKey || '')}" placeholder="lin_api_…" autocomplete="off" />
+        </div>
+        <div class="field" id="integ-linear-team-field"${!linear.apiKey ? ' style="display:none"' : ''}>
+          <label class="field-label">Default Team</label>
+          <div style="display:flex;gap:8px">
+            <select class="field-input" id="integ-linear-team">
+              <option value="">— Select team —</option>
+              ${(linear.teams || []).map(t => `<option value="${esc(t.id)}"${linear.defaultTeamId === t.id ? ' selected' : ''}>${esc(t.name)} (${esc(t.key)})</option>`).join('')}
+            </select>
+            <button class="btn-cfg-save" id="integ-linear-load-teams">Load Teams</button>
+          </div>
+        </div>
+        <div class="integ-card-actions">
+          <button class="btn-cfg-save" id="integ-linear-save">Save</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  $('#integ-linear-load-teams').addEventListener('click', async () => {
+    const btn = $('#integ-linear-load-teams');
+    btn.disabled = true; btn.textContent = '…';
+    try {
+      const r = await fetch(`/api/projects/${S.projectId}/linear/teams`);
+      const teams = await r.json();
+      if (!r.ok) throw new Error(teams.error || `HTTP ${r.status}`);
+      const sel = $('#integ-linear-team');
+      sel.innerHTML = '<option value="">— Select team —</option>' +
+        teams.map(t => `<option value="${esc(t.id)}">${esc(t.name)} (${esc(t.key)})</option>`).join('');
+      btn.textContent = '✓ Loaded';
+    } catch (e) {
+      btn.textContent = `✗ ${String(e.message).slice(0, 30)}`;
+    } finally {
+      btn.disabled = false;
+      setTimeout(() => { const b = $('#integ-linear-load-teams'); if (b) b.textContent = 'Load Teams'; }, 2500);
+    }
+  });
+
+  $('#integ-linear-save').addEventListener('click', async () => {
+    const btn     = $('#integ-linear-save');
+    const apiKey  = $('#integ-linear-key').value.trim();
+    const teamSel = $('#integ-linear-team');
+    const teamId  = teamSel?.value || '';
+    const curTeams = linear.teams || [];
+    const teams    = curTeams.length ? curTeams : (teamId ? [{ id: teamId, name: teamId, key: '' }] : []);
+    const newInteg = { ...integ, linear: apiKey ? { apiKey, defaultTeamId: teamId, teams } : {} };
+
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      const r = await fetch(`/api/projects/${S.projectId}/integrations`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newInteg),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      _integCache = newInteg;
+      btn.textContent = '✓ Saved';
+      if (apiKey) { const tf = $('#integ-linear-team-field'); if (tf) tf.style.display = ''; }
+      setTimeout(() => renderIntegrations(), 1500);
+    } catch (e) {
+      btn.textContent = '✗ Error';
+      setTimeout(() => { btn.disabled = false; btn.textContent = 'Save'; }, 2000);
+    }
+  });
 }
 
 function renderAnalyze() {
@@ -2524,6 +3645,7 @@ async function init() {
       item.classList.add('active');
       if (item.dataset.view === 'overview') showOverview();
       if (item.dataset.view === 'analyze')  showAnalyze();
+      if (item.dataset.view === 'tasks')    showTasks();
     });
   });
 
@@ -2552,7 +3674,8 @@ async function init() {
       $$('.stab-body').forEach(b => b.classList.remove('on'));
       tab.classList.add('on');
       $(`[data-stab="${tab.dataset.stab}"].stab-body`).classList.add('on');
-      if (tab.dataset.stab === 'general') renderGeneral();
+      if (tab.dataset.stab === 'general')       renderGeneral();
+      if (tab.dataset.stab === 'integrations') renderIntegrations();
     });
   });
 
@@ -2580,6 +3703,29 @@ async function init() {
   $('#mm-save').addEventListener('click', saveModel);
   $('#model-modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeModelModal(); });
   $('#mm-name').addEventListener('keydown', e => { if (e.key === 'Enter') saveModel(); });
+
+  // Tasks source bar + refresh
+  $$('.tasks-src-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      $$('.tasks-src-btn').forEach(b => b.classList.remove('on'));
+      btn.classList.add('on');
+      renderProjectTasks(btn.dataset.src);
+    });
+  });
+  $('#btn-tasks-refresh').addEventListener('click', () => {
+    renderProjectTasks(_currentTaskSrc);
+  });
+
+  // Visor check button
+  $('#btn-visor-check').addEventListener('click', async () => {
+    const btn = $('#btn-visor-check');
+    if (!S.projectId) return;
+    btn.disabled = true; btn.textContent = '…';
+    try {
+      await fetch(`/api/projects/${S.projectId}/visor/check`, { method: 'POST' });
+      await loadVisorBulletins();
+    } finally { btn.disabled = false; btn.textContent = 'Run Check'; }
+  });
 
   // Analyze button
   $('#btn-analyze-run').addEventListener('click', runAnalyze);

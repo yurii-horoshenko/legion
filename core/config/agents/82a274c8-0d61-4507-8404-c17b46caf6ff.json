@@ -1,0 +1,83 @@
+[
+  {
+    "id": "software-architect",
+    "name": "Software Architect",
+    "role": "KMM's shared domain/data layer requires deliberate architectural decisions around expect/actual patterns, Koin 4.0 DI graph boundaries, and iOS/Android platform divergence that must be defined before any mobile implementation begins",
+    "catalogId": "software-architect",
+    "status": "idle",
+    "group": "custom"
+  },
+  {
+    "id": "product-manager",
+    "name": "Product Manager",
+    "role": "The multi-step booking funnel (service → specialist → timeslot → confirm) and business owner analytics/calendar features require full product lifecycle ownership to define acceptance criteria, prioritize scope, and align with go-to-market goals",
+    "catalogId": "product-manager",
+    "status": "idle",
+    "group": "custom"
+  },
+  {
+    "id": "api-tester",
+    "name": "API Tester",
+    "role": "Three payment providers (Stripe, LiqPay, Fondy) and JWT/OTP auth flows demand comprehensive API test suites covering edge cases, idempotency, and payment failure recovery paths",
+    "catalogId": "api-tester",
+    "status": "idle",
+    "group": "custom"
+  },
+  {
+    "id": "mobile-app-builder",
+    "name": "Mobile App Builder",
+    "role": "Covers the full KMM + SwiftUI + Jetpack Compose tri-platform stack including Room 2.7 offline caching and Firebase FCM push notification integration for both iOS and Android",
+    "catalogId": "mobile-app-builder",
+    "status": "idle",
+    "group": "custom",
+    "model": "qwen3.5:9b"
+  },
+  {
+    "id": "backend-architect",
+    "name": "Backend Architect",
+    "role": "Owns the .NET 10 / ASP.NET Core service layer including Quartz job scheduling, multi-provider payment orchestration with reconciliation logic, and Google Places geo-search integration",
+    "catalogId": "backend-architect",
+    "status": "idle",
+    "group": "custom"
+  },
+  {
+    "id": "database-optimizer",
+    "name": "Database Optimizer",
+    "role": "Booking slot availability queries and geo-proximity search against PostgreSQL via Dapper require specialist indexing strategy — GiST indexes for geo queries and partial indexes for time-windowed availability — to maintain performance as the salon/booking dataset grows",
+    "catalogId": "database-optimizer",
+    "status": "idle",
+    "group": "custom"
+  },
+  {
+    "id": "security-engineer",
+    "name": "Security Engineer",
+    "role": "JWT/OAuth flows combined with Twilio OTP, Apple/Google Sign-In, and three payment providers create a broad auth and PCI attack surface requiring dedicated threat modeling and secure code review",
+    "catalogId": "security-engineer",
+    "status": "idle",
+    "group": "custom"
+  },
+  {
+    "id": "devops-automator",
+    "name": "DevOps Automator",
+    "role": "A tri-platform release pipeline spanning Azure Pipelines, Fastlane, and Gradle requires dedicated DevOps automation to keep build, test, and deploy cycles reliable across all three targets",
+    "catalogId": "devops-automator",
+    "status": "idle",
+    "group": "custom"
+  },
+  {
+    "id": "workflow-architect",
+    "name": "Workflow Architect",
+    "role": "The booking funnel has complex branching — availability conflicts, specialist re-assignment, partial payment failure, and cancellation policies — that Workflow Architect maps into build-ready specs with all failure-mode recovery paths before implementation begins",
+    "catalogId": "workflow-architect",
+    "status": "idle",
+    "group": "custom"
+  },
+  {
+    "id": "cultural-intelligence-strategist",
+    "name": "Cultural Intelligence Strategist",
+    "role": "Five-locale support spanning Cyrillic (RU, UK), Latin (EN, PL), and Hangul (KO) scripts requires cultural-intelligence review to ensure UI layouts, date/time/currency formats, and copy resonate correctly across all target markets",
+    "catalogId": "cultural-intelligence-strategist",
+    "status": "idle",
+    "group": "custom"
+  }
+]

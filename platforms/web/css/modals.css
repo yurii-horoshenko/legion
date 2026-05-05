@@ -1,0 +1,222 @@
+/* Legion — modals styles: overlays, modal shell, form fields, kanban swarm modal */
+
+/* ══════════════════════════════════════════
+   MODAL
+══════════════════════════════════════════ */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15,15,14,.5);
+  backdrop-filter: blur(4px);
+  display: none;
+  place-items: center;
+  z-index: 500;
+}
+
+.overlay.on { display: grid; }
+
+.modal {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  padding: 24px;
+  width: 380px;
+  box-shadow: 0 24px 80px rgba(0,0,0,.15);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.modal-title { font-size: 15px; font-weight: 600; color: var(--text); }
+
+.field { display: flex; flex-direction: column; gap: 5px; }
+
+.field-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.field-input {
+  padding: 9px 11px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  font-size: 13px;
+  color: var(--text);
+  transition: border-color var(--t);
+}
+
+.field-input:focus { border-color: var(--text-3); }
+.field-input::placeholder { color: var(--text-3); }
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.btn-cancel {
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  font-size: 13px;
+  color: var(--text-2);
+  background: var(--bg);
+  transition: border-color var(--t);
+}
+
+.btn-cancel:hover { border-color: var(--border-2); }
+
+.btn-create {
+  padding: 8px 18px;
+  background: var(--text);
+  color: var(--bg-card);
+  border-radius: var(--r);
+  font-size: 13px;
+  font-weight: 500;
+  transition: opacity var(--t);
+}
+
+.btn-create:hover { opacity: .75; }
+
+/* ══════════════════════════════════════════
+   KANBAN SWARM
+══════════════════════════════════════════ */
+
+.kanban-swarm {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--accent);
+  background: var(--accent-dim);
+  border: 1px solid var(--accent-border);
+  border-radius: 3px;
+  padding: 2px 5px;
+}
+
+.kanban-decompose {
+  color: var(--text-3);
+  font-size: 11px;
+  padding: 0 4px;
+  border-radius: var(--r);
+  transition: color var(--t), background var(--t);
+  line-height: 1;
+}
+.kanban-decompose:hover { color: var(--accent); background: var(--accent-dim); }
+
+/* ══════════════════════════════════════════
+   SWARM MODAL
+══════════════════════════════════════════ */
+
+.swarm-modal {
+  max-width: 580px;
+  width: 100%;
+  max-height: 82vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.swarm-task-title {
+  font-size: 12px;
+  color: var(--text-2);
+  font-style: italic;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.swarm-log {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 140px;
+  overflow-y: auto;
+  background: var(--bg-hover);
+  border-radius: var(--r);
+  padding: 8px 10px;
+}
+.swarm-log:empty { display: none; }
+
+.swarm-log-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-2);
+  font-family: var(--mono);
+  line-height: 1.5;
+}
+.swarm-log-icon { width: 12px; flex-shrink: 0; }
+.swarm-log-ok  { color: var(--ok); }
+.swarm-log-err { color: var(--err); }
+.swarm-log-done { opacity: .5; }
+
+.swarm-analysis {
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.65;
+  padding: 8px 12px;
+  background: var(--bg-card);
+  border-radius: var(--r);
+  border-left: 3px solid var(--accent);
+}
+
+.swarm-subtasks {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 4px;
+}
+
+.swarm-subtask {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  transition: border-color var(--t);
+}
+.swarm-subtask:hover { border-color: var(--border-2); }
+
+.swarm-order {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+  width: 14px;
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.swarm-mode-badge {
+  font-family: var(--mono);
+  font-size: 9px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.swarm-mode-badge.sequential { background: var(--info-dim); color: var(--info); }
+.swarm-mode-badge.parallel   { background: var(--ok-dim);   color: var(--ok);   }
+
+.swarm-subtask-info { flex: 1; min-width: 0; }
+.swarm-subtask-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.swarm-subtask-agent {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+  margin-top: 2px;
+}
+

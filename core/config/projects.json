@@ -1,1 +1,18 @@
-[]
+[
+  {
+    "name": "BladeParry",
+    "description": "",
+    "path": "/Users/gi_part/Standart/Projects/BladeParry",
+    "status": "ok",
+    "agents": 0,
+    "id": "397a6832-1f79-4ca0-b197-8e5776ed6b14"
+  },
+  {
+    "name": "VisiTime",
+    "description": "",
+    "path": "/Users/gi_part/Standart/Projects/VisiTime",
+    "status": "ok",
+    "agents": 0,
+    "id": "82a274c8-0d61-4507-8404-c17b46caf6ff"
+  }
+]

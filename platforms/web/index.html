@@ -4,7 +4,16 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Legion</title>
-  <link rel="stylesheet" href="css/app.css" />
+  <!-- CSS component files (split from app.css) -->
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/layout.css" />
+  <link rel="stylesheet" href="css/sidebar.css" />
+  <link rel="stylesheet" href="css/dashboard.css" />
+  <link rel="stylesheet" href="css/agent-panel.css" />
+  <link rel="stylesheet" href="css/modals.css" />
+  <link rel="stylesheet" href="css/settings.css" />
+  <link rel="stylesheet" href="css/analyze.css" />
+  <link rel="stylesheet" href="css/tasks-view.css" />
 </head>
 <body>
 <div id="app">
@@ -67,6 +76,7 @@
 
     <div class="rail-proj-item" data-view="overview">Overview</div>
     <div class="rail-proj-item" data-view="analyze">Analyze</div>
+    <div class="rail-proj-item" data-view="tasks">Tasks</div>
 
     <div class="rail-agents-header" id="rail-agents-header">
       <span class="rail-agents-caret" id="rail-agents-caret">▾</span>
@@ -136,10 +146,18 @@
         <div class="panel">
           <div class="panel-top">
             <span class="panel-label" data-i18n="panel_visor">Visor Bulletins</span>
-            <span class="panel-link" data-i18n="panel_visor_link">History</span>
+            <button class="panel-link" id="btn-visor-check">Run Check</button>
           </div>
           <div class="panel-scroll" id="bull-feed"></div>
         </div>
+      </div>
+
+      <div class="team-map-section">
+        <div class="panel-top">
+          <span class="panel-label">Team Map</span>
+          <span class="team-map-hint">Pipeline call hierarchy</span>
+        </div>
+        <div id="team-map"></div>
       </div>
     </div>
 
@@ -228,6 +246,22 @@
       <div class="overview-form" id="overview-form"></div>
     </div>
 
+    <!-- Tasks -->
+    <div id="view-tasks">
+      <div class="dash-headline">
+        <div>
+          <div class="dash-title">Tasks</div>
+          <div class="dash-meta" id="tasks-meta">All tasks across agents in this project</div>
+        </div>
+        <button class="btn-tasks-refresh" id="btn-tasks-refresh">⟳ Refresh</button>
+      </div>
+      <div class="tasks-source-bar" id="tasks-source-bar">
+        <button class="tasks-src-btn on" data-src="local">Local</button>
+        <button class="tasks-src-btn" data-src="linear">Linear</button>
+      </div>
+      <div id="tasks-body"></div>
+    </div>
+
     <!-- Analyze -->
     <div id="view-analyze">
       <div class="dash-headline">
@@ -259,6 +293,7 @@
         <button class="s-tab on" data-stab="general">General</button>
         <button class="s-tab"    data-stab="providers">Providers</button>
         <button class="s-tab"    data-stab="models">Models</button>
+        <button class="s-tab"    data-stab="integrations">Integrations</button>
       </div>
 
       <!-- General tab -->
@@ -290,6 +325,9 @@
         </div>
         <div class="models-list" id="models-list"></div>
       </div>
+
+      <!-- Integrations tab -->
+      <div class="stab-body" data-stab="integrations" id="stab-integrations"></div>
     </div>
 
     <!-- Home / Landing -->

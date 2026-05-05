@@ -1,0 +1,60 @@
+/* Legion — base styles: CSS variables/tokens, reset, html/body, scrollbar */
+
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@300;400;500;600&display=swap');
+
+/* ── Reset ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+button { font: inherit; border: none; cursor: pointer; background: none; color: inherit; }
+input, textarea { font: inherit; color: inherit; background: none; border: none; outline: none; }
+ul { list-style: none; }
+
+/* ── Tokens ── */
+:root {
+  --bg:            #F5F2EC;
+  --bg-card:       #FFFFFF;
+  --bg-hover:      #F0EDE6;
+  --rail:          #0F0F0E;
+  --rail-2:        #171715;
+  --rail-3:        #1F1F1D;
+  --rail-border:   #2A2A28;
+
+  --border:        #E3DFDA;
+  --border-2:      #D4CFC8;
+
+  --text:          #18160F;
+  --text-2:        #6B6560;
+  --text-3:        #A8A39C;
+
+  --rail-text:     #E8E4DE;
+  --rail-muted:    #6B6B68;
+  --rail-active:   #F5F2EC;
+
+  --accent:        #FF4D00;
+  --accent-dim:    rgba(255,77,0,.12);
+  --accent-border: rgba(255,77,0,.3);
+
+  --ok:      #00B87A;
+  --ok-dim:  rgba(0,184,122,.12);
+  --warn:    #F59E0B;
+  --warn-dim:rgba(245,158,11,.12);
+  --err:     #EF4444;
+  --err-dim: rgba(239,68,68,.12);
+  --info:    #6366F1;
+  --info-dim:rgba(99,102,241,.12);
+
+  --mono: 'Space Mono', monospace;
+  --sans: 'DM Sans', system-ui, sans-serif;
+
+  --r:   5px;
+  --r-lg:9px;
+  --r-xl:14px;
+  --t:   140ms ease;
+
+  --rail-w:  220px;
+  --top-h:   52px;
+}
+
+html, body { height: 100%; overflow: hidden; font-family: var(--sans); font-size: 13px; color: var(--text); background: var(--bg); }
+
+::-webkit-scrollbar { width: 3px; height: 3px; }
+::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 2px; }
