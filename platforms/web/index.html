@@ -104,60 +104,64 @@
     <div id="view-dash">
       <div class="dash-headline">
         <div>
-          <div class="dash-title" data-i18n="dash_title">Overview</div>
+          <div class="dash-title" data-i18n="dash_title">Dashboard</div>
           <div class="dash-meta" id="dash-meta"></div>
         </div>
       </div>
 
-      <div class="stats">
-        <div class="stat stat-0">
-          <div class="stat-label" data-i18n="stat_agents">Agents</div>
-          <div class="stat-num" id="s-agents">—</div>
-          <div class="stat-hint" data-i18n="stat_hint_agents">in this project</div>
-        </div>
-        <div class="stat stat-1">
-          <div class="stat-label" data-i18n="stat_workers">Workers</div>
-          <div class="stat-num" id="s-workers">—</div>
-          <div class="stat-hint" data-i18n="stat_hint_workers">active now</div>
-        </div>
-        <div class="stat stat-2">
-          <div class="stat-label" data-i18n="stat_tasks">Tasks</div>
-          <div class="stat-num" id="s-tasks">—</div>
-          <div class="stat-hint" data-i18n="stat_hint_tasks">total</div>
-        </div>
-        <div class="stat stat-3">
-          <div class="stat-label" data-i18n="stat_busy">Busy</div>
-          <div class="stat-num" id="s-busy">—</div>
-          <div class="stat-hint" data-i18n="stat_hint_busy">agents working</div>
-        </div>
-      </div>
-
-      <div class="dash-cols">
-        <div class="panel">
-          <div class="panel-top">
-            <span class="panel-label" data-i18n="panel_activity">Activity</span>
-            <span class="panel-link" data-i18n="panel_activity_link">See all</span>
-          </div>
-          <div class="panel-scroll" id="act-feed"></div>
-        </div>
-        <div class="panel">
-          <div class="panel-top">
-            <span class="panel-label" data-i18n="panel_visor">Visor Bulletins</span>
-            <button class="panel-link" id="btn-visor-check">Run Check</button>
-          </div>
-          <div class="panel-scroll" id="bull-feed"></div>
-        </div>
-      </div>
-
       <div class="ov-tabs-row">
-        <button class="ov-tab on" data-ovtab="settings">Overview</button>
+        <button class="ov-tab on" data-ovtab="overview">Overview</button>
         <button class="ov-tab"   data-ovtab="teammap">Team Map</button>
+        <button class="ov-tab"   data-ovtab="settings">Settings</button>
       </div>
-      <div class="ov-tab-body on" data-ovtab="settings">
-        <div class="overview-form" id="overview-form"></div>
+
+      <div class="ov-tab-body on" data-ovtab="overview">
+        <div class="stats">
+          <div class="stat stat-0">
+            <div class="stat-label" data-i18n="stat_agents">Agents</div>
+            <div class="stat-num" id="s-agents">—</div>
+            <div class="stat-hint" data-i18n="stat_hint_agents">in this project</div>
+          </div>
+          <div class="stat stat-1">
+            <div class="stat-label" data-i18n="stat_workers">Workers</div>
+            <div class="stat-num" id="s-workers">—</div>
+            <div class="stat-hint" data-i18n="stat_hint_workers">active now</div>
+          </div>
+          <div class="stat stat-2">
+            <div class="stat-label" data-i18n="stat_tasks">Tasks</div>
+            <div class="stat-num" id="s-tasks">—</div>
+            <div class="stat-hint" data-i18n="stat_hint_tasks">total</div>
+          </div>
+          <div class="stat stat-3">
+            <div class="stat-label" data-i18n="stat_busy">Busy</div>
+            <div class="stat-num" id="s-busy">—</div>
+            <div class="stat-hint" data-i18n="stat_hint_busy">agents working</div>
+          </div>
+        </div>
+        <div class="dash-cols">
+          <div class="panel">
+            <div class="panel-top">
+              <span class="panel-label" data-i18n="panel_activity">Activity</span>
+              <span class="panel-link" data-i18n="panel_activity_link">See all</span>
+            </div>
+            <div class="panel-scroll" id="act-feed"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-top">
+              <span class="panel-label" data-i18n="panel_visor">Visor Bulletins</span>
+              <button class="panel-link" id="btn-visor-check">Run Check</button>
+            </div>
+            <div class="panel-scroll" id="bull-feed"></div>
+          </div>
+        </div>
       </div>
+
       <div class="ov-tab-body" data-ovtab="teammap">
         <div id="team-map"></div>
+      </div>
+
+      <div class="ov-tab-body" data-ovtab="settings">
+        <div class="overview-form" id="overview-form"></div>
       </div>
 
     </div>
@@ -281,7 +285,6 @@
         <button class="s-tab on" data-stab="general">General</button>
         <button class="s-tab"    data-stab="providers">Providers</button>
         <button class="s-tab"    data-stab="models">Models</button>
-        <button class="s-tab"    data-stab="integrations">Integrations</button>
       </div>
 
       <!-- General tab -->
@@ -315,7 +318,6 @@
       </div>
 
       <!-- Integrations tab -->
-      <div class="stab-body" data-stab="integrations" id="stab-integrations"></div>
     </div>
 
     <!-- Home / Landing -->

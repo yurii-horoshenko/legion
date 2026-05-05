@@ -4,8 +4,7 @@ import { S, PROJECTS, MODELS, PROVIDERS, LEGION_CONFIG, PROJECT_AGENTS,
          setLegionConfig, setProviders, setModels, setProjects } from '../modules/state.js';
 import { $, $$, esc } from '../modules/utils.js';
 import { fetchProviders, fetchModels, apiSaveProvider, apiDeleteProvider,
-         apiFetchRemoteModels, apiSaveModel, apiDeleteModel, fetchIntegrations,
-         setIntegCache } from '../modules/api.js';
+         apiFetchRemoteModels, apiSaveModel, apiDeleteModel } from '../modules/api.js';
 import { showView, showDash } from '../ui/dashboard.js';
 import { renderProjBtn } from '../ui/topbar.js';
 import { renderTree } from '../ui/sidebar.js';
@@ -413,97 +412,3 @@ export async function saveModel() {
   renderModels();
 }
 
-// ── Integrations ───────────────────────────────────────────────────────────
-
-export async function renderIntegrations() {
-  const el = $('#stab-integrations');
-  if (!el) return;
-  if (!S.projectId) {
-    el.innerHTML = '<div class="integ-empty">Select a project to manage integrations.</div>';
-    return;
-  }
-  el.innerHTML = '<div class="cfg-hint">Loading…</div>';
-
-  const integ  = await fetchIntegrations();
-  const linear = integ.linear || {};
-
-  el.innerHTML = `
-    <div class="integ-card" id="integ-linear">
-      <div class="integ-card-head">
-        <div class="integ-card-info">
-          <div class="integ-card-icon">◈</div>
-          <div>
-            <div class="integ-card-name">Linear</div>
-            <div class="integ-card-desc">Pull issues as tasks and sync agent work</div>
-          </div>
-        </div>
-        <div class="integ-status${linear.apiKey ? ' integ-status-on' : ''}">${linear.apiKey ? '● Connected' : '○ Not configured'}</div>
-      </div>
-      <div class="integ-card-body">
-        <div class="field">
-          <label class="field-label">API Key</label>
-          <input class="field-input field-mono" id="integ-linear-key" type="password"
-            value="${esc(linear.apiKey || '')}" placeholder="lin_api_…" autocomplete="off" />
-        </div>
-        <div class="field" id="integ-linear-team-field"${!linear.apiKey ? ' style="display:none"' : ''}>
-          <label class="field-label">Default Team</label>
-          <div style="display:flex;gap:8px">
-            <select class="field-input" id="integ-linear-team">
-              <option value="">— Select team —</option>
-              ${(linear.teams || []).map(t => `<option value="${esc(t.id)}"${linear.defaultTeamId === t.id ? ' selected' : ''}>${esc(t.name)} (${esc(t.key)})</option>`).join('')}
-            </select>
-            <button class="btn-cfg-save" id="integ-linear-load-teams">Load Teams</button>
-          </div>
-        </div>
-        <div class="integ-card-actions">
-          <button class="btn-cfg-save" id="integ-linear-save">Save</button>
-        </div>
-      </div>
-    </div>
-  `;
-
-  $('#integ-linear-load-teams').addEventListener('click', async () => {
-    const btn = $('#integ-linear-load-teams');
-    btn.disabled = true; btn.textContent = '…';
-    try {
-      const r = await fetch(`/api/projects/${S.projectId}/linear/teams`);
-      const teams = await r.json();
-      if (!r.ok) throw new Error(teams.error || `HTTP ${r.status}`);
-      const sel = $('#integ-linear-team');
-      sel.innerHTML = '<option value="">— Select team —</option>' +
-        teams.map(t => `<option value="${esc(t.id)}">${esc(t.name)} (${esc(t.key)})</option>`).join('');
-      btn.textContent = '✓ Loaded';
-    } catch (e) {
-      btn.textContent = `✗ ${String(e.message).slice(0, 30)}`;
-    } finally {
-      btn.disabled = false;
-      setTimeout(() => { const b = $('#integ-linear-load-teams'); if (b) b.textContent = 'Load Teams'; }, 2500);
-    }
-  });
-
-  $('#integ-linear-save').addEventListener('click', async () => {
-    const btn     = $('#integ-linear-save');
-    const apiKey  = $('#integ-linear-key').value.trim();
-    const teamSel = $('#integ-linear-team');
-    const teamId  = teamSel?.value || '';
-    const curTeams = linear.teams || [];
-    const teams    = curTeams.length ? curTeams : (teamId ? [{ id: teamId, name: teamId, key: '' }] : []);
-    const newInteg = { ...integ, linear: apiKey ? { apiKey, defaultTeamId: teamId, teams } : {} };
-
-    btn.disabled = true; btn.textContent = 'Saving…';
-    try {
-      const r = await fetch(`/api/projects/${S.projectId}/integrations`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newInteg),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      setIntegCache(newInteg);
-      btn.textContent = '✓ Saved';
-      if (apiKey) { const tf = $('#integ-linear-team-field'); if (tf) tf.style.display = ''; }
-      setTimeout(() => renderIntegrations(), 1500);
-    } catch (e) {
-      btn.textContent = '✗ Error';
-      setTimeout(() => { btn.disabled = false; btn.textContent = 'Save'; }, 2000);
-    }
-  });
-}

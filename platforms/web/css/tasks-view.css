@@ -444,3 +444,93 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* ── Linear setup (not connected) ─────────────────────────────────────────── */
+
+.linear-setup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 48px 0 32px;
+  gap: 6px;
+  text-align: center;
+}
+
+.linear-setup-icon {
+  font-size: 28px;
+  color: #7c78e8;
+  margin-bottom: 4px;
+}
+
+.linear-setup-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.linear-setup-desc {
+  font-size: 12px;
+  color: var(--text-3);
+  margin-bottom: 16px;
+}
+
+.linear-setup-form {
+  width: 100%;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  text-align: left;
+}
+
+.linear-setup-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ── Linear connection panel (inline edit) ───────────────────────────────── */
+
+.lin-conn-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.btn-lin-conn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  color: var(--text-3);
+  font-size: 13px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--t), color var(--t), border-color var(--t);
+}
+.btn-lin-conn:hover { background: var(--surface-2); color: var(--text); }
+.btn-lin-conn.on {
+  color: #7c78e8;
+  border-color: rgba(124,120,232,.35);
+  background: rgba(124,120,232,.1);
+}
+
+.btn-danger-sm {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  color: var(--err, #ef4444);
+  font-size: 12px;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: background var(--t);
+}
+.btn-danger-sm:hover { background: rgba(239,68,68,.08); }
+.btn-danger-sm:disabled { opacity: .4; pointer-events: none; }

@@ -85,7 +85,7 @@ export async function renderProjectTasks(src) {
     } else if (src === 'linear') {
       const integ = await fetchIntegrations();
       if (!integ.linear?.apiKey) {
-        body.innerHTML = `<div class="tasks-empty">Linear not configured. Go to <b>Settings → Integrations</b> to add your API key.</div>`;
+        renderLinearSetup(body, integ);
         return;
       }
       const r = await fetch(`/api/projects/${S.projectId}/linear/issues`);
@@ -116,10 +116,15 @@ export async function renderProjectTasks(src) {
         return null;
       };
 
-      let html = `<div class="tasks-linear-toolbar">
-        <span class="tasks-linear-count">${issues.length} issue${issues.length !== 1 ? 's' : ''}</span>
-        <button class="btn-assign-tags" id="btn-manage-assign">⚙ Manage Assignments</button>
-      </div>`;
+      let html = `
+        <div id="lin-conn-panel" style="display:none"></div>
+        <div class="tasks-linear-toolbar">
+          <span class="tasks-linear-count">${issues.length} issue${issues.length !== 1 ? 's' : ''}</span>
+          <div style="display:flex;gap:6px;align-items:center">
+            <button class="btn-assign-tags" id="btn-manage-assign">⚙ Manage Assignments</button>
+            <button class="btn-lin-conn" id="btn-lin-settings" title="Linear connection">◈</button>
+          </div>
+        </div>`;
 
       for (const st of allStates) {
         const items = grouped[st];
@@ -148,11 +153,139 @@ export async function renderProjectTasks(src) {
       }
       body.innerHTML = html;
 
+      $('#btn-lin-settings')?.addEventListener('click', () => {
+        const panel = $('#lin-conn-panel');
+        const btn   = $('#btn-lin-settings');
+        if (panel.style.display !== 'none') {
+          panel.style.display = 'none';
+          btn.classList.remove('on');
+          panel.innerHTML = '';
+        } else {
+          panel.style.display = '';
+          btn.classList.add('on');
+          renderLinearConnPanel(panel, integ);
+        }
+      });
       $('#btn-manage-assign')?.addEventListener('click', () => openAssignmentPanel(issues, integ));
     }
   } catch (e) {
     body.innerHTML = `<div class="tasks-error">Failed to load: ${esc(e.message)}</div>`;
   }
+}
+
+// ── Linear connection helpers ───────────────────────────────────────────────
+
+function renderLinearSetup(body, integ) {
+  body.innerHTML = `
+    <div class="linear-setup">
+      <div class="linear-setup-icon">◈</div>
+      <div class="linear-setup-title">Connect Linear</div>
+      <div class="linear-setup-desc">Add your API key to pull issues as tasks</div>
+      <div class="linear-setup-form">
+        <div class="field">
+          <label class="field-label">API Key</label>
+          <input class="field-input field-mono" id="lin-key" type="password"
+            placeholder="lin_api_…" autocomplete="off" />
+        </div>
+        <div class="field" id="lin-team-field" style="display:none">
+          <label class="field-label">Default Team</label>
+          <div style="display:flex;gap:8px">
+            <select class="field-input" id="lin-team"><option value="">— Select team —</option></select>
+            <button class="btn-cfg-save" id="lin-load-teams">Load Teams</button>
+          </div>
+        </div>
+        <div class="linear-setup-actions">
+          <button class="btn-cfg-save" id="lin-save">Connect</button>
+        </div>
+      </div>
+    </div>`;
+  wireLinearForm(integ);
+}
+
+function renderLinearConnPanel(container, integ) {
+  const linear = integ.linear || {};
+  container.innerHTML = `
+    <div class="lin-conn-panel">
+      <div class="field">
+        <label class="field-label">API Key</label>
+        <input class="field-input field-mono" id="lin-key" type="password"
+          value="${esc(linear.apiKey || '')}" placeholder="lin_api_…" autocomplete="off" />
+      </div>
+      <div class="field" id="lin-team-field">
+        <label class="field-label">Default Team</label>
+        <div style="display:flex;gap:8px">
+          <select class="field-input" id="lin-team">
+            <option value="">— Select team —</option>
+            ${(linear.teams || []).map(t => `<option value="${esc(t.id)}"${linear.defaultTeamId === t.id ? ' selected' : ''}>${esc(t.name)} (${esc(t.key)})</option>`).join('')}
+          </select>
+          <button class="btn-cfg-save" id="lin-load-teams">Load Teams</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">
+        <button class="btn-danger-sm" id="lin-disconnect">Disconnect</button>
+        <button class="btn-cfg-save" id="lin-save">Save</button>
+      </div>
+    </div>`;
+  wireLinearForm(integ);
+  $('#lin-disconnect').addEventListener('click', async () => {
+    const btn = $('#lin-disconnect');
+    btn.disabled = true; btn.textContent = '…';
+    const newInteg = { ...integ, linear: {} };
+    try {
+      const r = await fetch(`/api/projects/${S.projectId}/integrations`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newInteg),
+      });
+      if (!r.ok) throw new Error();
+      setIntegCache(newInteg);
+      renderProjectTasks('linear');
+    } catch { btn.disabled = false; btn.textContent = 'Disconnect'; }
+  });
+}
+
+function wireLinearForm(integ) {
+  const linear = integ.linear || {};
+  $('#lin-key')?.addEventListener('input', () => {
+    const tf = $('#lin-team-field');
+    if (tf) tf.style.display = $('#lin-key').value.trim() ? '' : 'none';
+  });
+  $('#lin-load-teams')?.addEventListener('click', async () => {
+    const btn = $('#lin-load-teams');
+    btn.disabled = true; btn.textContent = '…';
+    try {
+      const r     = await fetch(`/api/projects/${S.projectId}/linear/teams`);
+      const teams = await r.json();
+      if (!r.ok) throw new Error(teams.error || `HTTP ${r.status}`);
+      const sel = $('#lin-team');
+      sel.innerHTML = '<option value="">— Select team —</option>' +
+        teams.map(t => `<option value="${esc(t.id)}">${esc(t.name)} (${esc(t.key)})</option>`).join('');
+      btn.textContent = '✓';
+    } catch { btn.textContent = '✗'; }
+    finally {
+      btn.disabled = false;
+      setTimeout(() => { const b = $('#lin-load-teams'); if (b) b.textContent = 'Load Teams'; }, 2000);
+    }
+  });
+  $('#lin-save')?.addEventListener('click', async () => {
+    const btn    = $('#lin-save');
+    const apiKey = $('#lin-key').value.trim();
+    if (!apiKey) return;
+    const teamId   = $('#lin-team')?.value || '';
+    const newInteg = { ...integ, linear: { apiKey, defaultTeamId: teamId, teams: linear.teams || [] } };
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      const r = await fetch(`/api/projects/${S.projectId}/integrations`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newInteg),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setIntegCache(newInteg);
+      renderProjectTasks('linear');
+    } catch {
+      btn.disabled = false;
+      setTimeout(() => { const b = $('#lin-save'); if (b) { b.disabled = false; b.textContent = 'Save'; } }, 2000);
+    }
+  });
 }
 
 // ── Assignment Panel ───────────────────────────────────────────────────────

@@ -22,7 +22,7 @@ import { openModal, closeModal, createProject } from './modals/project-modal.js'
 import { showSettings, hideSettings, renderGeneral, renderProviders, renderModels,
          openProviderModal, closeProviderModal, updateProviderModalFields, saveProvider,
          openModelModal, closeModelModal, fetchModelsForModal, saveModel,
-         renderIntegrations, renderOverview } from './settings/settings.js';
+         renderOverview } from './settings/settings.js';
 
 // Register selectAgent for sidebar clicks & team map
 registerSelectAgent(selectAgent);
@@ -139,8 +139,9 @@ async function init() {
     tab.addEventListener('click', () => {
       $$('.ov-tab').forEach(t => t.classList.toggle('on', t.dataset.ovtab === tab.dataset.ovtab));
       $$('.ov-tab-body').forEach(b => b.classList.toggle('on', b.dataset.ovtab === tab.dataset.ovtab));
-      if (tab.dataset.ovtab === 'settings') renderOverview();
-      if (tab.dataset.ovtab === 'teammap')  renderTeamMap();
+      if (tab.dataset.ovtab === 'overview')  renderDash();
+      if (tab.dataset.ovtab === 'settings')  renderOverview();
+      if (tab.dataset.ovtab === 'teammap')   renderTeamMap();
     });
   });
 
@@ -151,8 +152,7 @@ async function init() {
       $$('.stab-body').forEach(b => b.classList.remove('on'));
       tab.classList.add('on');
       $(`[data-stab="${tab.dataset.stab}"].stab-body`).classList.add('on');
-      if (tab.dataset.stab === 'general')      renderGeneral();
-      if (tab.dataset.stab === 'integrations') renderIntegrations();
+      if (tab.dataset.stab === 'general') renderGeneral();
     });
   });
 
