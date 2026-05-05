@@ -76,54 +76,69 @@ export async function renderTasks(a) {
 
   $('#task-add') && $('#task-add').addEventListener('click', () => openTaskModal(a));
 
-  // Append Linear section if enabled for this agent
+  // Append Linear section if project has Linear configured
   const integ = _integCache || {};
-  if (a.linearEnabled && integ.linear?.apiKey) {
+  if (integ.linear?.apiKey) {
     appendLinearSection(el, a, integ);
   }
 }
 
-export async function appendLinearSection(el, a, integ) {
+export function appendLinearSection(el, a, integ) {
   const labelName = a.linearLabelName || a.name;
   const section   = document.createElement('div');
   section.className = 'agent-linear-section';
   section.innerHTML = `
     <div class="agent-linear-header">
       <span class="linear-badge">Linear</span>
-      <span class="agent-linear-title">Issues tagged "${esc(labelName)}"</span>
-      <span class="agent-linear-count" id="alin-count"></span>
+      <span class="agent-linear-title">Assigned issues</span>
+      <span class="agent-linear-count" id="alin-count" style="display:none"></span>
+      <button class="btn-alin-refresh" id="btn-alin-refresh" title="Refresh from Linear">⟳ Refresh</button>
     </div>
     <div class="agent-linear-body" id="alin-body">
       <div class="tab-loading">Loading…</div>
     </div>`;
   el.appendChild(section);
 
+  const load = () => loadAgentLinearIssues(section, a, integ);
+  section.querySelector('#btn-alin-refresh').addEventListener('click', load);
+  load();
+}
+
+async function loadAgentLinearIssues(section, a, integ) {
+  const labelName = a.linearLabelName || a.name;
+  const bodyEl  = section.querySelector('#alin-body');
+  const countEl = section.querySelector('#alin-count');
+  const btn     = section.querySelector('#btn-alin-refresh');
+
+  bodyEl.innerHTML = `<div class="tab-loading">Loading…</div>`;
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+
   try {
-    const params = new URLSearchParams({ labelName, limit: '50' });
-    if (integ.linear.defaultTeamId) params.set('teamId', integ.linear.defaultTeamId);
+    const params = new URLSearchParams({ labelName, limit: '100' });
+    if (integ.linear?.defaultTeamId) params.set('teamId', integ.linear.defaultTeamId);
     const r = await fetch(`/api/projects/${S.projectId}/linear/issues?${params}`);
     if (!r.ok) { const e = await r.json(); throw new Error(e.error || `HTTP ${r.status}`); }
-    const issues  = await r.json();
-    const bodyEl  = section.querySelector('#alin-body');
-    const countEl = section.querySelector('#alin-count');
-    if (countEl) countEl.textContent = issues.length;
+    const issues = await r.json();
+
+    if (countEl) { countEl.textContent = issues.length; countEl.style.display = ''; }
+    if (btn) { btn.disabled = false; btn.textContent = '⟳ Refresh'; }
 
     if (!issues.length) {
-      bodyEl.innerHTML = `<div class="agent-linear-empty">No issues with label "${esc(labelName)}"</div>`;
+      bodyEl.innerHTML = `<div class="agent-linear-empty">No issues assigned to "${esc(labelName)}"</div>`;
       return;
     }
 
     bodyEl.innerHTML = issues.map(issue => `
-      <div class="agent-linear-row">
+      <div class="agent-linear-row" data-url="${esc(issue.url || '')}">
         <span class="agent-linear-dot" style="background:${esc(issue.state?.color || '#888')}"></span>
         <span class="tasks-row-id">${esc(issue.identifier || '')}</span>
         <span class="agent-linear-row-title">${esc(issue.title || 'Untitled')}</span>
-        ${issue.priorityLabel ? `<span class="tasks-row-pri">${esc(issue.priorityLabel)}</span>` : ''}
+        ${issue.priorityLabel && issue.priorityLabel !== 'No priority' ? `<span class="tasks-row-pri">${esc(issue.priorityLabel)}</span>` : ''}
         ${issue.url ? `<a class="agent-linear-link" href="${esc(issue.url)}" target="_blank" rel="noopener">↗</a>` : ''}
       </div>`).join('');
   } catch (e) {
-    const bodyEl = section.querySelector('#alin-body');
     if (bodyEl) bodyEl.innerHTML = `<div class="tasks-error">Error: ${esc(e.message)}</div>`;
+    if (btn) { btn.disabled = false; btn.textContent = '⟳ Refresh'; }
   }
 }
 

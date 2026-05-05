@@ -282,6 +282,20 @@
 }
 .agent-linear-link:hover { color: var(--accent); }
 
+.btn-alin-refresh {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  color: var(--text-3);
+  font-size: 11px;
+  padding: 3px 9px;
+  cursor: pointer;
+  transition: background var(--t), color var(--t);
+}
+.btn-alin-refresh:hover { background: var(--bg-hover); color: var(--text-2); }
+.btn-alin-refresh:disabled { opacity: .4; pointer-events: none; }
+
 /* ── Tasks view — linear toolbar & assignment indicators ─────────────────── */
 
 .tasks-linear-toolbar {
