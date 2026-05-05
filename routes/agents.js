@@ -86,7 +86,13 @@ module.exports = function createAgentRoutes(ctx) {
       fs.mkdirSync(dir, { recursive: true });
       // Remove old avatars
       for (const e of ["png","jpg","jpeg","webp","gif"]) { try { fs.unlinkSync(path.join(dir, `avatar.${e}`)); } catch {} }
-      const chunks = []; for await (const c of req) chunks.push(c);
+      const MAX_AVATAR = 5 * 1024 * 1024;
+      const chunks = []; let avatarSize = 0;
+      for await (const c of req) {
+        avatarSize += c.length;
+        if (avatarSize > MAX_AVATAR) { req.destroy(); http.json(res, 413, { error: "Avatar exceeds 5 MB limit" }); return true; }
+        chunks.push(c);
+      }
       fs.writeFileSync(path.join(dir, `avatar.${ext}`), Buffer.concat(chunks));
       http.json(res, 200, { ok: true });
       return true;
@@ -273,6 +279,7 @@ module.exports = function createAgentRoutes(ctx) {
       }
       fs.mkdirSync(settingsDir, { recursive: true });
       fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2));
+      agentFs.buildClaudeAgentMd(project, aid);
       http.json(res, 200, { ok: true, model: agent.model || null, proxy: !!(agent.model && !isClaudeCli) });
       return true;
     }

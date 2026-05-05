@@ -4,6 +4,9 @@ const fs     = require("fs");
 const path   = require("path");
 const crypto = require("crypto");
 
+// One active analysis per project at a time
+const _activeAnalyze = new Set();
+
 module.exports = function createAnalysisRoutes(ctx) {
   const { io, http, ai, visor } = ctx;
 
@@ -13,37 +16,25 @@ module.exports = function createAnalysisRoutes(ctx) {
     if (urlPath.match(/^\/api\/projects\/[^/]+\/analyze$/) && method === "POST") {
       const pid = urlPath.split("/")[3];
 
-      res.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection":    "keep-alive",
-        "Access-Control-Allow-Origin": "*",
-      });
-      let aborted = false;
-      req.on("close", () => { aborted = true; });
+      if (_activeAnalyze.has(pid)) {
+        const { fail } = http.createSSEHandler(res, req, "analyze");
+        fail("Analysis already running for this project"); return true;
+      }
+      _activeAnalyze.add(pid);
 
-      const send = (type, payload) => {
-        if (!aborted) res.write(`data: ${JSON.stringify({ type, ...payload })}\n\n`);
-      };
-      const progress = (msg) => { console.log("[analyze]", msg); send("progress", { message: msg }); };
-      const done     = (result) => { send("done", { result }); res.end(); };
-      const fail     = (err)    => { send("error", { message: err }); res.end(); };
+      const { progress, done, fail, isAborted } = http.createSSEHandler(res, req, "analyze");
 
       try {
         progress("Validating configuration…");
-        const projects = io.readProjects();
-        const project  = projects.find(p => p.id === pid);
+        const project = io.readProjects().find(p => p.id === pid);
         if (!project) return fail("Project not found");
 
         const cfg = io.readConfig();
         if (!cfg.defaultModelId) return fail("No default model configured in Settings → General");
 
-        const models    = io.readModels();
-        const providers = io.readProviders();
-        const model     = models.find(m => m.id === cfg.defaultModelId);
-        if (!model) return fail("Default model not found");
-        const provider = providers.find(p => p.id === model.providerId);
-        if (!provider) return fail("Provider not found");
+        const resolved = http.resolveModel(io.readModels(), io.readProviders(), cfg.defaultModelId);
+        if (!resolved) return fail("Default model not found or provider not configured");
+        const { model, provider } = resolved;
         const needsKey = !["ollama", "claude-cli"].includes(provider.type);
         if (needsKey && !provider.key && !model.key) return fail("Provider not configured or missing API key");
 
@@ -69,15 +60,6 @@ module.exports = function createAnalysisRoutes(ctx) {
           return 'general';
         }
 
-        function parseJson(raw) {
-          const stripped = raw.replace(/^```(?:json)?\s*/m, "").replace(/\s*```\s*$/m, "").trim();
-          const jsonStr  = stripped.startsWith("{") || stripped.startsWith("[")
-            ? stripped
-            : (stripped.match(/\{[\s\S]*\}/)?.[0] || "");
-          if (!jsonStr) throw new Error(`Non-JSON response: ${raw.slice(0, 200)}`);
-          return JSON.parse(jsonStr);
-        }
-
         // ── Read existing agents ─────────────────────────────────────────────
         progress("Reading existing agents…");
         const pagents      = io.readPAgents();
@@ -90,7 +72,6 @@ module.exports = function createAnalysisRoutes(ctx) {
         progress("Scanning project documentation…");
         const docParts = [];
         if (project.path) {
-          // AGENTS.md intentionally excluded — may contain historical agent lists from other systems
           const docCandidates = ["README.md", "readme.md", "README.txt", "package.json", "pyproject.toml", "Cargo.toml", "CLAUDE.md"];
           for (const f of docCandidates) {
             const fp = path.join(project.path, f);
@@ -101,7 +82,6 @@ module.exports = function createAnalysisRoutes(ctx) {
           const docsDir = path.join(project.path, "docs");
           if (fs.existsSync(docsDir)) {
             try {
-              // Skip agent-list files — they describe historical/planned agents, not architecture
               const SKIP_DOCS = /^(agents|03-agents|agent-list|aifactory)/i;
               const files = fs.readdirSync(docsDir).filter(f => /\.(md|txt)$/i.test(f) && !SKIP_DOCS.test(f)).slice(0, 5);
               for (const f of files) {
@@ -115,18 +95,17 @@ module.exports = function createAnalysisRoutes(ctx) {
           : "No documentation found.";
         progress(docParts.length ? `Read ${docParts.length} documentation file(s)` : "No documentation files found");
 
-        // ── Load catalog (needed for both empty and normal paths) ─────────────
+        // ── Load catalog ─────────────────────────────────────────────────────
         const catalogFile   = path.join(ctx.webRoot, "data", "agents-catalog.json");
         const catalogAgents = fs.existsSync(catalogFile)
           ? (() => { try { return JSON.parse(fs.readFileSync(catalogFile, "utf8")); } catch { return []; } })()
           : [];
 
-        // ── Exclude already-installed agents (by catalogId AND name) ──────────
         const existingIds   = new Set(existingList.map(a => a.catalogId).filter(Boolean));
         const existingNames = new Set(existingList.map(a => a.name.toLowerCase()));
         const notInstalled  = a => !existingIds.has(a.id) && !existingNames.has(a.name.toLowerCase());
 
-        // ── SHORTCUT: no docs and no description → suggest Technical Writer ───
+        // ── Shortcut: no docs and no description ─────────────────────────────
         const hasDesc = (project.description || '').trim().length > 20;
         if (!docParts.length && !hasDesc) {
           progress("No documentation found — suggesting a documentation agent first");
@@ -146,11 +125,10 @@ module.exports = function createAnalysisRoutes(ctx) {
           return done(result);
         }
 
-        // ── Detect domain (server-side, no AI call) ──────────────────────────
+        // ── Detect domain ────────────────────────────────────────────────────
         const domainHint = detectDomain((project.description || '') + ' ' + docParts.slice(0, 2).join(' '));
         progress(`Domain detected: ${domainHint}`);
 
-        // ── Filter catalog by domain + exclude installed ──────────────────────
         progress("Loading agent catalog…");
         const allowedGroups = DOMAIN_GROUPS[domainHint];
         const available     = catalogAgents.filter(a => notInstalled(a) && (!allowedGroups || allowedGroups.has(a.group)));
@@ -160,9 +138,9 @@ module.exports = function createAnalysisRoutes(ctx) {
         }).join("\n");
         progress(`Catalog filtered: ${available.length} agents in ${[...new Set(available.map(a => a.group))].join(', ')}`);
 
-        if (aborted) return;
+        if (isAborted()) return;
 
-        // ── PASS 1: extract functional areas ─────────────────────────────────
+        // ── Pass 1: extract functional areas ─────────────────────────────────
         progress("Pass 1 — Extracting functional requirements…");
         const pass1File = path.resolve(ctx.webRoot, "../../core/prompts/analyze-pass1.md");
         const pass1Tpl  = fs.existsSync(pass1File) ? fs.readFileSync(pass1File, "utf8") : "";
@@ -173,13 +151,13 @@ module.exports = function createAnalysisRoutes(ctx) {
           .replace("{{existing_agents}}",     existingAgents);
 
         const pass1Raw = await ai.callAI(model, provider, pass1Prompt);
-        if (aborted) return;
-        const pass1    = parseJson(pass1Raw);
+        if (isAborted()) return;
+        const pass1    = http.parseAIJson(pass1Raw);
         const funcAreas = (pass1.functional_areas || []).join("\n- ");
         const covered   = (pass1.covered_by_existing || []).join("\n- ") || "Nothing yet";
         progress(`Found ${pass1.functional_areas?.length || 0} functional areas: ${(pass1.functional_areas || []).slice(0, 3).join(', ')}…`);
 
-        // ── PASS 2: match agents to requirements ─────────────────────────────
+        // ── Pass 2: match agents ──────────────────────────────────────────────
         progress("Pass 2 — Matching agents to requirements…");
         const installedNote = existingList.length
           ? `\n\nDo NOT recommend any of these already-installed agents: ${existingList.map(a => a.name).join(', ')}.`
@@ -196,11 +174,10 @@ module.exports = function createAnalysisRoutes(ctx) {
           .replace("{{catalog}}",             catalogText);
 
         const pass2Raw = await ai.callAI(model, provider, pass2Prompt);
-        if (aborted) return;
+        if (isAborted()) return;
 
         progress("Parsing response…");
-        const result = parseJson(pass2Raw);
-        // Final safety: strip any agents that are already installed
+        const result = http.parseAIJson(pass2Raw);
         if (result.agents) {
           result.agents = result.agents.filter(a => !existingNames.has(a.name.toLowerCase()) && !existingIds.has(a.id));
         }
@@ -210,8 +187,10 @@ module.exports = function createAnalysisRoutes(ctx) {
       } catch (err) {
         console.error("[analyze]", err.message);
         fail(err.message);
+      } finally {
+        _activeAnalyze.delete(pid);
       }
-      return true; // SSE response already ended — do not fall through to 404 handler
+      return true;
     }
 
     // POST /api/projects/:pid/agents/:aid/tasks/:tid/decompose  (SSE)
@@ -219,30 +198,17 @@ module.exports = function createAnalysisRoutes(ctx) {
       const parts = urlPath.split("/");
       const xpid = parts[3], xaid = parts[5], xtid = parts[7];
 
-      res.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection":    "keep-alive",
-        "Access-Control-Allow-Origin": "*",
-      });
-      let aborted = false;
-      req.on("close", () => { aborted = true; });
-      const send     = (type, payload) => { if (!aborted) res.write(`data: ${JSON.stringify({ type, ...payload })}\n\n`); };
-      const progress = (msg)    => { console.log("[swarm]", msg); send("progress", { message: msg }); };
-      const done     = (result) => { send("done", { result }); res.end(); };
-      const fail     = (err)    => { send("error", { message: err }); res.end(); };
+      const { progress, done, fail, isAborted } = http.createSSEHandler(res, req, "swarm");
 
       try {
         const cfg = io.readConfig();
         if (!cfg.defaultModelId) return fail("No default model configured in Settings → General");
-        const project  = io.readProjects().find(p => p.id === xpid);
+        const project = io.readProjects().find(p => p.id === xpid);
         if (!project)  return fail("Project not found");
-        const models    = io.readModels();
-        const providers = io.readProviders();
-        const model     = models.find(m => m.id === cfg.defaultModelId);
-        if (!model)    return fail("Default model not found");
-        const provider  = providers.find(p => p.id === model.providerId);
-        if (!provider) return fail("Provider not found");
+
+        const resolved = http.resolveModel(io.readModels(), io.readProviders(), cfg.defaultModelId);
+        if (!resolved) return fail("Default model not found or provider not configured");
+        const { model, provider } = resolved;
 
         progress("Reading task and team…");
         const tasks = visor.readAgentStoreFile(project, xaid, "tasks");
@@ -292,15 +258,17 @@ module.exports = function createAnalysisRoutes(ctx) {
         ].join("\n");
 
         progress("Calling AI to plan decomposition…");
-        if (aborted) return;
+        if (isAborted()) return;
         const raw = await ai.callAI(model, provider, prompt);
-        if (aborted) return;
+        if (isAborted()) return;
 
         progress("Parsing decomposition plan…");
-        const stripped = raw.replace(/^```(?:json)?\s*/m, "").replace(/\s*```\s*$/m, "").trim();
-        const jsonStr  = stripped.startsWith("{") ? stripped : (stripped.match(/\{[\s\S]*\}/)?.[0] || "");
-        if (!jsonStr) return fail("AI returned invalid response — no JSON found");
-        const plan = JSON.parse(jsonStr);
+        let plan;
+        try {
+          plan = http.parseAIJson(raw);
+        } catch {
+          return fail("AI returned invalid response — no JSON found");
+        }
 
         const subtasks = plan.subtasks || [];
         if (!subtasks.length) return fail("AI returned no subtasks");
@@ -310,7 +278,7 @@ module.exports = function createAnalysisRoutes(ctx) {
         const created = [];
 
         for (const sub of subtasks) {
-          if (aborted) break;
+          if (isAborted()) break;
           const targetAgent = agents.find(a => a.id === sub.agentId) || agents[0];
           if (!targetAgent) continue;
           const newTask = {

@@ -15,34 +15,18 @@ module.exports = function createSkillRoutes(ctx) {
       const pid = parts[3];
       const aid = parts[5];
 
-      res.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection":    "keep-alive",
-        "Access-Control-Allow-Origin": "*",
-      });
-      let aborted = false;
-      req.on("close", () => { aborted = true; });
-
-      const send     = (type, payload) => { if (!aborted) res.write(`data: ${JSON.stringify({ type, ...payload })}\n\n`); };
-      const progress = (msg) => { console.log("[skills]", msg); send("progress", { message: msg }); };
-      const done     = (result) => { send("done", { result }); res.end(); };
-      const fail     = (err)    => { send("error", { message: err }); res.end(); };
+      const { progress, done, fail } = http.createSSEHandler(res, req, "skills");
 
       try {
         const cfg = io.readConfig();
         if (!cfg.defaultModelId) return fail("No default model configured in Settings → General");
 
-        const projects = io.readProjects();
-        const project  = projects.find(p => p.id === pid);
-        if (!project)   return fail("Project not found");
+        const project = io.readProjects().find(p => p.id === pid);
+        if (!project)  return fail("Project not found");
 
-        const models    = io.readModels();
-        const providers = io.readProviders();
-        const model     = models.find(m => m.id === cfg.defaultModelId);
-        if (!model) return fail("Default model not found");
-        const provider = providers.find(p => p.id === model.providerId);
-        if (!provider) return fail("Provider not found");
+        const resolved = http.resolveModel(io.readModels(), io.readProviders(), cfg.defaultModelId);
+        if (!resolved) return fail("Default model not found or provider not configured");
+        const { model, provider } = resolved;
 
         const agentsMap = io.readPAgents();
         const agent = (agentsMap[pid] || []).find(a => a.id === aid);

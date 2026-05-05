@@ -4,9 +4,9 @@
 import './i18n.js';
 import i18n from './i18n.js';
 
-import { S, setLegionConfig } from './modules/state.js';
+import { S, setLegionConfig, PROJECTS, PROJECT_AGENTS, setAddedAgentIds } from './modules/state.js';
 import { $, $$ } from './modules/utils.js';
-import { loadProjects, connectActivityWS, onActivity } from './modules/api.js';
+import { loadProjects, loadProjectAgents, connectActivityWS, onActivity } from './modules/api.js';
 
 import { renderProjBtn, renderProjList, openProj, closeProj } from './ui/topbar.js';
 import { renderTree, initAgentsHeaderToggle, registerSelectAgent } from './ui/sidebar.js';
@@ -214,6 +214,20 @@ async function init() {
   setLegionConfig(await fetch('/api/config').then(r => r.json()).catch(() => ({})));
 
   await loadProjects();
+
+  // Restore last-selected project if it still exists
+  const savedPid = localStorage.getItem('legion:projectId');
+  if (savedPid && savedPid !== S.projectId && PROJECTS.find(p => p.id === savedPid)) {
+    S.projectId = savedPid;
+    await loadProjectAgents(savedPid);
+    setAddedAgentIds(new Set((PROJECT_AGENTS[savedPid] || []).map(a => a.id)));
+  }
+
+  // Persist selected project across page refreshes
+  window.addEventListener('beforeunload', () => {
+    if (S.projectId) localStorage.setItem('legion:projectId', S.projectId);
+  });
+
   renderProjBtn();
   renderTree();
   showDash();

@@ -144,8 +144,10 @@ export function setIntegCache(val) { _integCache = val; }
 
 // ── WebSocket activity feed ────────────────────────────────────────────────
 
-let _wsHandlers = [];
-let _wsSocket   = null;
+let _wsHandlers  = [];
+let _wsSocket    = null;
+let _wsDelay     = 1000;  // current retry delay (ms), doubles each attempt up to 30s
+const WS_MAX_DELAY = 30_000;
 
 export function onActivity(fn) { _wsHandlers.push(fn); }
 
@@ -154,6 +156,8 @@ export function connectActivityWS() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const sock  = new WebSocket(`${proto}://${location.host}/ws`);
   _wsSocket = sock;
+
+  sock.onopen = () => { _wsDelay = 1000; };  // reset on successful connect
 
   sock.onmessage = (e) => {
     try {
@@ -164,8 +168,8 @@ export function connectActivityWS() {
 
   sock.onclose = () => {
     _wsSocket = null;
-    // Reconnect after 3s
-    setTimeout(connectActivityWS, 3000);
+    setTimeout(connectActivityWS, _wsDelay);
+    _wsDelay = Math.min(_wsDelay * 2, WS_MAX_DELAY);
   };
 
   sock.onerror = () => sock.close();

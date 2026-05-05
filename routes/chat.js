@@ -21,12 +21,9 @@ module.exports = function createChatRoutes(ctx) {
       const modelId = agent.model || cfg.defaultModelId;
       if (!modelId) { http.json(res, 400, { error: "No model configured for this agent" }); return true; }
 
-      const models    = io.readModels();
-      const providers = io.readProviders();
-      const modelObj  = models.find(m => m.modelId === modelId || m.id === modelId);
-      if (!modelObj) { http.json(res, 404, { error: `Model '${modelId}' not found` }); return true; }
-      const provider = providers.find(p => p.id === modelObj.providerId);
-      if (!provider) { http.json(res, 404, { error: "Provider not configured" }); return true; }
+      const resolved = http.resolveModel(io.readModels(), io.readProviders(), modelId);
+      if (!resolved) { http.json(res, 404, { error: `Model '${modelId}' not found or provider not configured` }); return true; }
+      const { model: modelObj, provider } = resolved;
 
       // Collect skill descriptions
       const userSkillsDir = path.join(os.homedir(), ".claude", "skills");
@@ -75,12 +72,9 @@ Introduce yourself in 3-5 sentences. Cover: your name, your specialization in th
       const modelId = agent.model || cfg.defaultModelId;
       if (!modelId) { http.json(res, 400, { error: "No model configured for this agent. Set one in Settings → Models." }); return true; }
 
-      const models    = io.readModels();
-      const providers = io.readProviders();
-      const modelObj  = models.find(m => m.modelId === modelId || m.id === modelId);
-      if (!modelObj) { http.json(res, 404, { error: `Model '${modelId}' not found` }); return true; }
-      const provider = providers.find(p => p.id === modelObj.providerId);
-      if (!provider) { http.json(res, 404, { error: "Provider not configured" }); return true; }
+      const resolved = http.resolveModel(io.readModels(), io.readProviders(), modelId);
+      if (!resolved) { http.json(res, 404, { error: `Model '${modelId}' not found or provider not configured` }); return true; }
+      const { model: modelObj, provider } = resolved;
 
       const systemPrompt = `You are ${agent.name}. ${agent.role}${ai.langDirective(body.lang)}`;
       try {
@@ -98,12 +92,9 @@ Introduce yourself in 3-5 sentences. Cover: your name, your specialization in th
     if (urlPath === "/api/proxy/v1/messages" && method === "POST") {
       const { model: modelId, messages = [], max_tokens, system, stream } = body;
 
-      const models    = io.readModels();
-      const providers = io.readProviders();
-      const modelObj  = models.find(m => m.modelId === modelId || m.id === modelId);
-      if (!modelObj) { http.json(res, 404, { error: { type: "not_found_error", message: `Model '${modelId}' not found in Legion. Configure it in Settings → Models.` } }); return true; }
-      const provider = providers.find(p => p.id === modelObj.providerId);
-      if (!provider) { http.json(res, 404, { error: { type: "not_found_error", message: "Provider not configured" } }); return true; }
+      const resolved = http.resolveModel(io.readModels(), io.readProviders(), modelId);
+      if (!resolved) { http.json(res, 404, { error: { type: "not_found_error", message: `Model '${modelId}' not found or provider not configured. Check Settings → Models.` } }); return true; }
+      const { model: modelObj, provider } = resolved;
 
       const allMessages = system ? [{ role: "system", content: system }, ...messages] : messages;
 

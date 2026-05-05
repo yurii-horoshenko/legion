@@ -146,29 +146,15 @@ module.exports = function createLinearRoutes(ctx) {
       const parts   = urlPath.split("/");
       const project = io.readProjects().find(p => p.id === parts[3]);
 
-      res.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection":    "keep-alive",
-        "Access-Control-Allow-Origin": "*",
-      });
-      let aborted = false;
-      req.on("close", () => { aborted = true; });
-      const send  = (type, payload) => { if (!aborted) res.write(`data: ${JSON.stringify({ type, ...payload })}\n\n`); };
-      const prog  = (msg)    => { send("progress", { message: msg }); };
-      const done  = (result) => { send("done", { result }); res.end(); };
-      const fail  = (err)    => { send("error", { message: err }); res.end(); };
+      const { send, progress: prog, done, fail } = http.createSSEHandler(res, req, "auto-assign");
 
       try {
         if (!project?.path) return fail("Project not found");
         const cfg = io.readConfig();
         if (!cfg.defaultModelId) return fail("No default model configured in Settings → General");
-        const models    = io.readModels();
-        const providers = io.readProviders();
-        const model     = models.find(m => m.id === cfg.defaultModelId);
-        if (!model)    return fail("Default model not found");
-        const provider  = providers.find(p => p.id === model.providerId);
-        if (!provider) return fail("Provider not found");
+        const resolved = http.resolveModel(io.readModels(), io.readProviders(), cfg.defaultModelId);
+        if (!resolved) return fail("Default model not found or provider not configured");
+        const { model, provider } = resolved;
 
         const issues = (body.issues || []).slice(0, 100);
         const agents = (io.readPAgents()[parts[3]] || [])
@@ -195,21 +181,17 @@ module.exports = function createLinearRoutes(ctx) {
 
         let assigned = 0;
         for (let idx = 0; idx < issues.length; idx++) {
-          if (aborted) break;
+          // aborted check removed — SSE handler tracks disconnect internally
           const issue = issues[idx];
           send("processing", { issueId: issue.id, index: idx, total: issues.length });
 
           const userMsg = `Issue ${issue.identifier || ""}: ${issue.title || "Untitled"}\n${(issue.description || "").slice(0, 200)}`;
           try {
-            const raw      = await ai.callAIMessages(model, provider, sysPrompt, [{ role: "user", content: userMsg }]);
-            const stripped = raw.replace(/^```(?:json)?\s*/m, "").replace(/\s*```\s*$/m, "").trim();
-            const jsonStr  = stripped.startsWith("{") ? stripped : (stripped.match(/\{[\s\S]*\}/)?.[0] || "");
-            if (jsonStr) {
-              const parsed = JSON.parse(jsonStr);
-              if (parsed.agentId) {
-                send("assignment", { issueId: issue.id, agentId: parsed.agentId, agentName: parsed.agentName || "", reason: parsed.reason || "" });
-                assigned++;
-              }
+            const raw    = await ai.callAIMessages(model, provider, sysPrompt, [{ role: "user", content: userMsg }]);
+            const parsed = http.parseAIJson(raw);
+            if (parsed.agentId) {
+              send("assignment", { issueId: issue.id, agentId: parsed.agentId, agentName: parsed.agentName || "", reason: parsed.reason || "" });
+              assigned++;
             }
           } catch (e) {
             send("assignment-error", { issueId: issue.id, message: e.message });
