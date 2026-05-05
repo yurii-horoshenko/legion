@@ -720,12 +720,13 @@ async function applyAssignments(issues, integ, overlay) {
       const newLabels = [...curLabels.filter(id => !allAgentLabelIds.includes(id)), labelEntry.labelId];
 
       log(`Assigning "${lName}" → ${issue?.identifier || issueId}…`);
-      const pr = await fetch(`/api/projects/${S.projectId}/linear/issues/${issueId}/labels`, {
+      const pr  = await fetch(`/api/projects/${S.projectId}/linear/issues/${issueId}/labels`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ labelIds: newLabels }),
       });
-      if (!pr.ok) { const e = await pr.json(); log(`✗ ${e.error}`, 'assign-log-err'); continue; }
+      const prd = await pr.json();
+      if (!pr.ok || !prd.ok) { log(`✗ ${prd.error || 'Unknown error'}`, 'assign-log-err'); continue; }
       changed++;
     }
 

@@ -133,10 +133,13 @@ module.exports = function createLinearRoutes(ctx) {
       const { labelIds } = body;
       if (!Array.isArray(labelIds)) { http.json(res, 400, { error: "labelIds array required" }); return true; }
       try {
-        const q = `mutation($id:String!,$labelIds:[String!]!){issueUpdate(id:$id,input:{labelIds:$labelIds}){success}}`;
+        const q = `mutation($id:String!,$labelIds:[String!]!){issueUpdate(id:$id,input:{labelIds:$labelIds}){success issue{id identifier}}}`;
         const result = await io.linearQuery(apiKey, q, { id: issueId, labelIds });
-        if (result.errors) { http.json(res, 400, { error: result.errors[0]?.message }); return true; }
-        http.json(res, 200, { ok: !!result.data?.issueUpdate?.success });
+        console.log("[linear patch]", issueId, JSON.stringify(result).slice(0, 300));
+        if (result.errors) { http.json(res, 400, { error: result.errors[0]?.message || JSON.stringify(result.errors) }); return true; }
+        const success = !!result.data?.issueUpdate?.success;
+        if (!success) { http.json(res, 400, { error: `Linear returned success:false for issue ${issueId}` }); return true; }
+        http.json(res, 200, { ok: true });
       } catch (e) { http.json(res, 500, { error: e.message }); }
       return true;
     }
