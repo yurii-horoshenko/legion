@@ -1,6 +1,7 @@
 node_modules/
 .config/
 platforms/web/data/agents-catalog.json
+.DS_Store
 
 # Claude Code
 CLAUDE.md

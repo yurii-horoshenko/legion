@@ -1,7 +1,7 @@
 web:
-	legion web
+	node bin/legion.js web
 
-catalog:
-	python3 scripts/parse_catalog.py
+dev:
+	node bin/legion.js web --no-open
 
-.PHONY: web catalog
+.PHONY: web dev
