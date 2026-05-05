@@ -261,23 +261,32 @@ function renderMd(text) {
 function showTaskDetail(task) {
   const body = $('#tasks-body');
   if (!body) return;
+  const statusColors = { todo: '#6366f1', 'in-progress': '#f59e0b', in_progress: '#f59e0b', done: '#22c55e', blocked: '#ef4444', backlog: '#94a3b8' };
+  const dotColor = statusColors[task.status] || '#94a3b8';
+  const priKey = (task.priority || '').toLowerCase().replace(/\s+/g, '-');
   body.innerHTML = `
     <div class="td-page">
       <div class="td-page-nav">
         <button class="td-back" id="btn-td-back">← Back</button>
+      </div>
+      <div class="td-page-header">
         <div class="td-page-badges">
-          <span class="tasks-group-dot tasks-dot-${esc(task.status || 'backlog')}"></span>
-          <span class="td-page-status">${esc(task.status || 'backlog')}</span>
-          ${task.priority ? `<span class="tasks-row-pri tasks-pri-${esc(task.priority)}">${esc(task.priority)}</span>` : ''}
-          ${task.agentName ? `<span class="td-page-agent">${esc(task.agentEmoji || '🤖')} ${esc(task.agentName)}</span>` : ''}
+          <span class="td-status-badge">
+            <span class="td-status-dot" style="background:${dotColor}"></span>
+            ${esc(task.status || 'backlog')}
+          </span>
+          ${priKey ? `<span class="td-pri-badge td-pri-${esc(priKey)}">${esc(task.priority)}</span>` : ''}
+          ${task.agentName ? `<span class="td-status-badge">${esc(task.agentEmoji || '🤖')} ${esc(task.agentName)}</span>` : ''}
+        </div>
+        <h1 class="td-page-title">${esc(task.title || 'Untitled')}</h1>
+        <div class="td-page-meta">
+          ${task.createdAt ? `<span>${new Date(task.createdAt).toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' })}</span>` : ''}
+          ${task.swarmId ? `<span class="td-meta-sep">·</span><span>⚡ ${esc(task.swarmId)}</span>` : ''}
         </div>
       </div>
-      <h1 class="td-page-title">${esc(task.title || 'Untitled')}</h1>
-      ${task.createdAt ? `<div class="td-page-date">${new Date(task.createdAt).toLocaleDateString()}</div>` : ''}
       <div class="td-page-content">
         ${task.description ? renderMd(task.description) : '<p class="td-no-desc">No description</p>'}
       </div>
-      ${task.swarmId ? `<div class="td-page-meta-row">⚡ Swarm: ${esc(task.swarmId)}</div>` : ''}
       ${task.agentId ? `
         <div class="td-page-footer">
           <button class="btn-cfg-save" id="btn-td-open">Open in agent →</button>
@@ -298,25 +307,37 @@ function showTaskDetail(task) {
 function showLinearDetail(issue) {
   const body = $('#tasks-body');
   if (!body) return;
-  const labels = (issue.labels?.nodes || []).map(l => `<span class="td-label-chip">${esc(l.name)}</span>`).join('');
+  const stateColor = issue.state?.color || '#94a3b8';
+  const priLabel   = (issue.priorityLabel || '').toLowerCase();
+  const priKey     = priLabel.replace(/\s+/g, '-');
+  const labels = (issue.labels?.nodes || []).map(l =>
+    `<span class="td-label-chip">${l.color ? `<span class="td-label-dot" style="background:${esc(l.color)}"></span>` : ''}${esc(l.name)}</span>`
+  ).join('');
+  const assigneeAva = issue.assignee?.name
+    ? issue.assignee.name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase()
+    : '';
   body.innerHTML = `
     <div class="td-page">
       <div class="td-page-nav">
         <button class="td-back" id="btn-td-back">← Back</button>
+      </div>
+      <div class="td-page-header">
         <div class="td-page-badges">
-          <span class="tasks-row-id">${esc(issue.identifier || '')}</span>
-          <span class="tasks-group-dot" style="background:${esc(issue.state?.color || '#888')}"></span>
-          <span class="td-page-status">${esc(issue.state?.name || '')}</span>
-          ${issue.priorityLabel ? `<span class="tasks-row-pri">${esc(issue.priorityLabel)}</span>` : ''}
+          ${issue.identifier ? `<span class="td-page-id">${esc(issue.identifier)}</span>` : ''}
+          <span class="td-status-badge">
+            <span class="td-status-dot" style="background:${esc(stateColor)}"></span>
+            ${esc(issue.state?.name || '')}
+          </span>
+          ${priKey && priLabel !== 'no priority' ? `<span class="td-pri-badge td-pri-${esc(priKey)}">${esc(issue.priorityLabel)}</span>` : ''}
         </div>
+        <h1 class="td-page-title">${esc(issue.title || 'Untitled')}</h1>
+        <div class="td-page-meta">
+          ${issue.team?.name ? `<span>${esc(issue.team.name)}</span>` : ''}
+          ${issue.createdAt ? `<span class="td-meta-sep">·</span><span>${new Date(issue.createdAt).toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' })}</span>` : ''}
+          ${assigneeAva ? `<span class="td-meta-sep">·</span><span class="td-page-assignee"><span class="td-assignee-ava">${assigneeAva}</span>${esc(issue.assignee.name)}</span>` : ''}
+        </div>
+        ${labels ? `<div class="td-labels-row">${labels}</div>` : ''}
       </div>
-      <h1 class="td-page-title">${esc(issue.title || 'Untitled')}</h1>
-      <div class="td-page-date">
-        ${issue.team?.name ? `${esc(issue.team.name)}` : ''}
-        ${issue.createdAt ? ` · ${new Date(issue.createdAt).toLocaleDateString()}` : ''}
-        ${issue.assignee?.name ? ` · ${esc(issue.assignee.name)}` : ''}
-      </div>
-      ${labels ? `<div class="td-labels-row">${labels}</div>` : ''}
       <div class="td-page-content">
         ${issue.description ? renderMd(issue.description) : '<p class="td-no-desc">No description</p>'}
       </div>
