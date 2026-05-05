@@ -74,7 +74,7 @@
   <!-- ── Rail (sidebar) ────────────────────────── -->
   <aside id="rail">
 
-    <div class="rail-proj-item" data-view="overview">Overview</div>
+    <div class="rail-proj-item active" data-view="dash">Dashboard</div>
     <div class="rail-proj-item" data-view="analyze">Analyze</div>
     <div class="rail-proj-item" data-view="tasks">Tasks</div>
 
@@ -87,9 +87,6 @@
     <div class="agent-tree" id="agent-tree"></div>
 
     <nav class="rail-nav">
-      <div class="rail-nav-item active" data-view="dash">
-        <span class="rail-nav-icon">⊞</span> <span>Dashboard</span>
-      </div>
       <div class="rail-nav-item" data-view="settings">
         <span class="rail-nav-icon">⚙</span> <span>Settings</span>
       </div>
@@ -150,6 +147,17 @@
           </div>
           <div class="panel-scroll" id="bull-feed"></div>
         </div>
+      </div>
+
+      <div class="ov-tabs-row">
+        <button class="ov-tab on" data-ovtab="settings">Overview</button>
+        <button class="ov-tab"   data-ovtab="teammap">Team Map</button>
+      </div>
+      <div class="ov-tab-body on" data-ovtab="settings">
+        <div class="overview-form" id="overview-form"></div>
+      </div>
+      <div class="ov-tab-body" data-ovtab="teammap">
+        <div id="team-map"></div>
       </div>
 
     </div>
@@ -223,25 +231,8 @@
 
     </div>
 
-    <!-- Project Overview -->
-    <div id="view-overview">
-      <div class="dash-headline">
-        <div>
-          <div class="dash-title" id="overview-title">Overview</div>
-          <div class="dash-meta" id="overview-meta">Project settings and folder configuration</div>
-        </div>
-      </div>
-      <div class="ov-tabs-row">
-        <button class="ov-tab on" data-ovtab="settings">Overview</button>
-        <button class="ov-tab"   data-ovtab="teammap">Team Map</button>
-      </div>
-      <div class="ov-tab-body on" data-ovtab="settings">
-        <div class="overview-form" id="overview-form"></div>
-      </div>
-      <div class="ov-tab-body" data-ovtab="teammap">
-        <div id="team-map"></div>
-      </div>
-    </div>
+    <!-- Project Overview (redirects to Dashboard) -->
+    <div id="view-overview"></div>
 
     <!-- Tasks -->
     <div id="view-tasks">

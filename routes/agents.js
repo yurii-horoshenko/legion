@@ -166,26 +166,6 @@ module.exports = function createAgentRoutes(ctx) {
       if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(agentId)) { http.json(res, 400, { error: "Invalid agent ID" }); return true; }
       const project = io.readProjects().find(p => p.id === projectId);
 
-      function storeFile() {
-        if (!project?.path) return null;
-        const dir = path.join(project.path, ".legion", "agents", agentId);
-        fs.mkdirSync(dir, { recursive: true });
-        return path.join(dir, store + ".json");
-      }
-      function readStore() {
-        const f = storeFile();
-        if (!f || !fs.existsSync(f)) return [];
-        try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return []; }
-      }
-      function writeStore(data) {
-        const f = storeFile();
-        if (!f) return;
-        const d = JSON.stringify(data, null, 2);
-        const tmp = f + ".tmp";
-        fs.writeFileSync(tmp, d);
-        fs.renameSync(tmp, f);
-      }
-
       // After any pipeline mutation, regenerate PIPELINE.md for human/AI readability
       // Also regenerates LEGION.md for pipeline and cron changes
       function syncPipelineMd(list) {
@@ -211,42 +191,39 @@ module.exports = function createAgentRoutes(ctx) {
       }
 
       if (method === "GET" && !itemId) {
-        http.json(res, 200, readStore());
+        http.json(res, 200, db.storeGet(projectId, agentId, store));
         return true;
       }
       if (method === "POST" && !itemId) {
         const item = { ...body, id: body.id || crypto.randomUUID(), createdAt: new Date().toISOString() };
-        const list = readStore();
-        list.push(item);
-        writeStore(list);
+        db.storePost(projectId, agentId, store, item);
+        const list = db.storeGet(projectId, agentId, store);
         syncPipelineMd(list);
         if (store === "tasks") {
-          db?.log("task:created", projectId, agentId, { id: item.id, title: item.title, status: item.status });
+          db.log("task:created", projectId, agentId, { id: item.id, title: item.title, status: item.status });
           ws?.broadcast("task:created", { pid: projectId, aid: agentId, task: item });
         }
         http.json(res, 200, item);
         return true;
       }
       if ((method === "PATCH" || method === "PUT") && itemId) {
-        const list = readStore();
-        const idx  = list.findIndex(x => x.id === itemId);
-        if (idx < 0) { http.json(res, 404, { error: "Not found" }); return true; }
-        list[idx] = { ...list[idx], ...body, id: itemId, updatedAt: new Date().toISOString() };
-        writeStore(list);
+        const updated = db.storePatch(projectId, agentId, store, itemId, body);
+        if (!updated) { http.json(res, 404, { error: "Not found" }); return true; }
+        const list = db.storeGet(projectId, agentId, store);
         syncPipelineMd(list);
         if (store === "tasks") {
-          db?.log("task:updated", projectId, agentId, { id: itemId, status: list[idx].status, title: list[idx].title });
-          ws?.broadcast("task:updated", { pid: projectId, aid: agentId, task: list[idx] });
+          db.log("task:updated", projectId, agentId, { id: itemId, status: updated.status, title: updated.title });
+          ws?.broadcast("task:updated", { pid: projectId, aid: agentId, task: updated });
         }
-        http.json(res, 200, list[idx]);
+        http.json(res, 200, updated);
         return true;
       }
       if (method === "DELETE" && itemId) {
-        const list = readStore().filter(x => x.id !== itemId);
-        writeStore(list);
+        db.storeDel(projectId, agentId, store, itemId);
+        const list = db.storeGet(projectId, agentId, store);
         syncPipelineMd(list);
         if (store === "tasks") {
-          db?.log("task:deleted", projectId, agentId, { id: itemId });
+          db.log("task:deleted", projectId, agentId, { id: itemId });
           ws?.broadcast("task:deleted", { pid: projectId, aid: agentId, taskId: itemId });
         }
         http.json(res, 200, { ok: true });
@@ -305,12 +282,11 @@ module.exports = function createAgentRoutes(ctx) {
       const agentId   = parts[5];
       const map       = io.readPAgents();
       const removed   = (map[projectId] || []).find(a => a.id === agentId);
-      if (map[projectId]) map[projectId] = map[projectId].filter(a => a.id !== agentId);
-      io.writePAgents(map);
+      db.deleteAgent(projectId, agentId);
       const project = io.readProjects().find(p => p.id === projectId);
       if (project) agentFs.deleteAgentFile(project, agentId);
       if (project) agentFs.syncLegionMd(project, projectId);
-      db?.log("agent:removed", projectId, agentId, { name: removed?.name });
+      db.log("agent:removed", projectId, agentId, { name: removed?.name });
       ws?.broadcast("agent:removed", { pid: projectId, aid: agentId, name: removed?.name });
       http.json(res, 200, { ok: true });
       return true;

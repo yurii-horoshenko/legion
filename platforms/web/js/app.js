@@ -10,7 +10,7 @@ import { loadProjects, connectActivityWS, onActivity } from './modules/api.js';
 
 import { renderProjBtn, renderProjList, openProj, closeProj } from './ui/topbar.js';
 import { renderTree, initAgentsHeaderToggle, registerSelectAgent } from './ui/sidebar.js';
-import { showView, showDash, renderDash, loadVisorBulletins } from './ui/dashboard.js';
+import { showView, showDash, renderDash, loadVisorBulletins, renderTeamMap } from './ui/dashboard.js';
 import { selectAgent, renderTab } from './ui/agent-panel.js';
 import { showCatalog, hideCatalog, renderCatalogFilters, renderCatalogGrid,
          initCatalogFilterListener, setCatalogSearchLocal } from './ui/catalog.js';
@@ -22,7 +22,7 @@ import { openModal, closeModal, createProject } from './modals/project-modal.js'
 import { showSettings, hideSettings, renderGeneral, renderProviders, renderModels,
          openProviderModal, closeProviderModal, updateProviderModalFields, saveProvider,
          openModelModal, closeModelModal, fetchModelsForModal, saveModel,
-         renderIntegrations, showOverview, renderOverview } from './settings/settings.js';
+         renderIntegrations, renderOverview } from './settings/settings.js';
 
 // Register selectAgent for sidebar clicks & team map
 registerSelectAgent(selectAgent);
@@ -110,7 +110,7 @@ async function init() {
       $$('.rail-proj-item').forEach(i => i.classList.remove('active'));
       $$('.rail-nav-item').forEach(i => i.classList.remove('active'));
       item.classList.add('active');
-      if (item.dataset.view === 'overview') showOverview();
+      if (item.dataset.view === 'dash')    { S.agentId = null; renderTree(); showDash(); }
       if (item.dataset.view === 'analyze')  showAnalyze();
       if (item.dataset.view === 'tasks')    showTasks();
     });
@@ -131,6 +131,16 @@ async function init() {
       if (item.dataset.view === 'home') {
         showView('view-home');
       }
+    });
+  });
+
+  // ── Overview tabs (Dashboard view) ───────────────────────────────────────
+  $$('.ov-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      $$('.ov-tab').forEach(t => t.classList.toggle('on', t.dataset.ovtab === tab.dataset.ovtab));
+      $$('.ov-tab-body').forEach(b => b.classList.toggle('on', b.dataset.ovtab === tab.dataset.ovtab));
+      if (tab.dataset.ovtab === 'settings') renderOverview();
+      if (tab.dataset.ovtab === 'teammap')  renderTeamMap();
     });
   });
 
@@ -206,7 +216,7 @@ async function init() {
   await loadProjects();
   renderProjBtn();
   renderTree();
-  renderDash();
+  showDash();
 
   // ── WebSocket activity feed ───────────────────────────────────────────────
   onActivity(msg => { import('./ui/dashboard.js').then(m => m.pushActivity(msg)); });

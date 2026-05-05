@@ -43,8 +43,7 @@ export function hideSettings() {
 // ── Overview ───────────────────────────────────────────────────────────────
 
 export function showOverview() {
-  showView('view-overview');
-  renderOverview();
+  import('../ui/dashboard.js').then(({ showDash }) => showDash());
 }
 
 export function renderOverview() {

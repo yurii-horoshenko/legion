@@ -22,8 +22,8 @@ module.exports = function startServer({ port, doOpen, webRoot }) {
   const agentsBaseDir = path.resolve(webRoot, "../../core/agents");
 
   const httpLib  = require("../lib/http");
-  const io       = require("../lib/io")(configDir);
   const db       = require("../lib/db")(configDir);
+  const io       = require("../lib/io")(configDir, db);
   const aiLib    = require("../lib/ai")(httpLib, io);
   const agentFs  = require("../lib/agents-fs")(io, agentsBaseDir, webRoot);
   const visor    = require("../lib/visor")(io, aiLib);

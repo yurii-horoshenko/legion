@@ -2,13 +2,14 @@
 
 /* ── Dashboard ── */
 #view-dash {
+  display: none;
   flex: 1;
   overflow-y: auto;
   padding: 24px;
-  display: flex;
   flex-direction: column;
   gap: 20px;
 }
+#view-dash.on { display: flex; }
 
 .dash-headline {
   display: flex;

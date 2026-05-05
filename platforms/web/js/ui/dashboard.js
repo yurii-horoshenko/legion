@@ -24,6 +24,7 @@ export function showView(name) {
 export function showDash() {
   showView('view-dash');
   renderDash();
+  import('../settings/settings.js').then(({ renderOverview }) => renderOverview());
 }
 
 export function renderDash() {
