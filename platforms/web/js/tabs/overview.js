@@ -102,29 +102,46 @@ export async function renderAgentOverview(a) {
   const integKeywords = (fContext.match(/\b(api|webhook|oauth|slack|github|linear|jira|notion|discord|telegram|database|redis|sql|graphql|http|rest|endpoint)\b/gi) || []).length;
   const allTodos      = id.todos + so.todos + cx.todos + me.todos + sk.todos;
 
-  function stat(v) { return Math.min(100, Math.round(Math.max(0, v))); }
+  // No upper cap — 100 is a milestone (bar fills), stats can grow beyond it
+  function stat(v) { return Math.round(Math.max(0, v)); }
 
-  // ── Stat formulas: file content is the base, runtime activity grows them ──
-  //
-  // Valor  — how well-defined this agent is + task performance
-  const valor = stat(id.words * 1.2 + (totalTasks > 0 ? (doneTasks / totalTasks) * 50 : 0));
+  // ── Stat formulas ─────────────────────────────────────────────────────────
+  // Target ranges: fresh agent 20–50 · active agent 60–100 · elite 100+
 
-  // Sorcery — tool/skill power from SKILLS.md + assigned skills + automation
-  const sorcery = stat(sk.bullets * 8 + skillCount * 18 + activeCron * 12);
+  // Valor — identity definition depth + task track record
+  // 80-word identity = 40 base; perfect completion on 20 tasks = +80 → ~120
+  const valor = stat(
+    id.words * 0.5 +
+    (totalTasks > 0 ? (doneTasks / totalTasks) * 80 : 0)
+  );
 
-  // Dominion — channels, pipelines, and integrations in CONTEXT
-  const dominion = stat(chCount * 18 + pipeLinks * 15 + integKeywords * 4 + (cx.words > 30 ? 15 : 0));
+  // Sorcery — assigned skills + documented tools + automation
+  // 8 skills + 8 bullets + 1 cron ≈ 74; 15 skills + 15 bullets + 3 cron ≈ 150
+  const sorcery = stat(skillCount * 5 + sk.bullets * 3 + activeCron * 10);
 
-  // Lore — accumulated knowledge written into MEMORY.md / CONTEXT.md + store
-  const lore = stat((me.words + cx.words) * 2 + persistMems * 10);
+  // Dominion — channels, pipelines, integration keywords in CONTEXT.md
+  // 3 channels + 2 pipelines ≈ 56; 5 channels + 5 pipelines + 8 keywords ≈ 134
+  const dominion = stat(
+    chCount * 12 + pipeLinks * 10 + integKeywords * 3 +
+    (cx.words > 50 ? 15 : cx.words > 20 ? 8 : 0)
+  );
 
-  // Soul — depth of values in SOUL.md + personality richness
-  const soul = stat(so.bullets * 8 + so.sections * 10 + descLen / 15);
+  // Lore — persistent memories + documented knowledge in MEMORY/CONTEXT
+  // 10 memories + 100 words ≈ 110; sparse ≈ 10–30
+  const lore = stat(persistMems * 8 + me.words * 0.5 + cx.words * 0.3);
 
-  // Discipline — how well-structured the configuration files are + memory quality
-  const discipline = stat(id.sections * 8 + so.sections * 6 + (totalMems > 0 ? (persistMems / totalMems) * 40 : 0));
+  // Soul — values/personality in SOUL.md + description richness
+  // 8 bullets + 5 sections + 200-char desc ≈ 89; sparse ≈ 15–30
+  const soul = stat(so.bullets * 5 + so.sections * 8 + descLen * 0.1);
 
-  // Disorientation — chaos: TODOs, failures, stuck work, noise in memory
+  // Discipline — structural completeness of config files + memory quality
+  // 8 id-sections + 5 soul-sections + high persist ratio ≈ 112; sparse ≈ 20–40
+  const discipline = stat(
+    id.sections * 5 + so.sections * 4 +
+    (totalMems > 0 ? (persistMems / totalMems) * 60 : 0)
+  );
+
+  // Disorientation — chaos: TODOs, failures, stuck tasks, low-quality memories
   const disorient = stat(allTodos * 8 + failedTasks * 20 + inProgTasks * 8 + tempMems * 6 + todoMems * 4);
 
   // ── Level / XP ────────────────────────────────────────────────────────────
@@ -155,20 +172,20 @@ export async function renderAgentOverview(a) {
   ];
 
   function statRow(s, last) {
-    const pct = s.value;
+    const barPct = Math.min(100, s.value);
     let glowCls = '';
-    if (s.key === 'soul'     && pct > 60) glowCls = 'ov-stat-glow';
-    if (s.key === 'disorient'&& pct > 70) glowCls = 'ov-stat-disorient-glow';
+    if (s.key === 'soul'     && s.value > 80) glowCls = 'ov-stat-glow';
+    if (s.key === 'disorient'&& s.value > 70) glowCls = 'ov-stat-disorient-glow';
     return `
       <div class="ov-stat-row ${glowCls}${last ? ' ov-stat-last' : ''}">
         <span class="ov-stat-icon">${s.icon}</span>
         <span class="ov-stat-name">${s.label}</span>
         <div class="ov-stat-bar-wrap">
           <div class="ov-stat-track">
-            <div class="ov-stat-fill" style="width:${pct}%;background:${s.color}"></div>
+            <div class="ov-stat-fill" style="width:${barPct}%;background:${s.color}"></div>
           </div>
         </div>
-        <span class="ov-stat-num" style="color:${s.color}">${pct}</span>
+        <span class="ov-stat-num" style="color:${s.color}">${s.value}</span>
         <span class="ov-stat-info" data-tip="${esc(s.formula)}">ⓘ</span>
       </div>`;
   }
