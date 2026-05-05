@@ -28,6 +28,13 @@ legion web --no-open    # Don't auto-open browser
 legion help             # Show all commands
 ```
 
+Or without global install:
+
+```bash
+npm start               # legion web (opens browser)
+npm run dev             # legion web --no-open
+```
+
 ---
 
 ## Uninstall
@@ -48,10 +55,65 @@ npm install -g .
 
 ## What happens on `legion web`
 
-1. Starts a local HTTP server (Node built-in, no external deps)
-2. Serves `platforms/web/` as static files
-3. Opens `http://localhost:3000` in your default browser
-4. `Ctrl+C` to stop
+1. `bin/legion.js` parses CLI arguments
+2. `lib/catalog.js` builds `catalog.json` from `core/agents/catalog/*.md` files
+3. `bin/server.js` starts a local HTTP server (Node.js stdlib, zero external deps):
+   - Instantiates factory modules: `createIO`, `createHTTP`, `createAI`, `createAgentFs`, `createVisor`
+   - Registers route handlers from `routes/` — each receives a shared `ctx` object
+   - Serves `platforms/web/` as static files
+4. Opens `http://localhost:3000` in your default browser
+5. `Ctrl+C` to stop
+
+---
+
+## Server architecture
+
+```
+bin/server.js
+│
+├── lib/io.js          readProjects / writeProjects / readPAgents / writePAgents
+│                      readModels / writeModels / readProviders / writeProviders
+│                      readIntegrations / writeIntegrations / linearQuery
+│
+├── lib/http.js        postJson / getJson / json(res, status, body) / readBody(req)
+│
+├── lib/ai.js          callAI / callAIMessages / streamOllamaToAnthropicSSE
+│                      fetchRemoteModels / langDirective
+│
+├── lib/agents-fs.js   writeAgentFile / deleteAgentFile / agentMd
+│                      syncClaudeAgents / initLegionFolder / syncLegionMd
+│
+├── lib/visor.js       runVisorCheck / getBulletins
+│
+└── routes/            Each file: module.exports = function(ctx) { return async handle(...) }
+    ├── projects.js    /api/projects (CRUD + folder picker)
+    ├── agents.js      /api/projects/:pid/agents (CRUD, avatar, files, stores, activate)
+    ├── chat.js        /api/.../chat, /api/.../chat/intro, /api/proxy/v1/messages
+    ├── config.js      /api/models, /api/providers, /api/config
+    ├── analysis.js    /api/projects/:pid/analyze (SSE)
+    ├── skills.js      /api/.../skills, /api/.../suggest-skills
+    ├── linear.js      /api/projects/:pid/linear/*
+    └── monitoring.js  /api/projects/:pid/visor, tasks, pipelines
+```
+
+All modules use Node.js stdlib only — no `npm install` ever needed.
+
+---
+
+## Config file locations
+
+All config is stored in `core/config/` inside the Legion repo:
+
+| File | Contents |
+|------|----------|
+| `projects.json` | List of all projects |
+| `agents/{pid}.json` | Agents for project `pid` (one file per project) |
+| `providers.json` | Provider definitions (no keys) |
+| `models.json` | Model definitions (no keys) |
+| `.pkeys.json` | Provider API keys — **gitignored** |
+| `.keys.json` | Model API keys — **gitignored** |
+
+Keys never leave your machine.
 
 ---
 

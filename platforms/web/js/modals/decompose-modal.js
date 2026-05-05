@@ -2,7 +2,7 @@
 
 import { S } from '../modules/state.js';
 import { $, esc } from '../modules/utils.js';
-import { AGENT_REGISTRY } from '../modules/api.js';
+import { AGENT_REGISTRY } from '../modules/state.js';
 import { renderTasks } from '../tabs/tasks.js';
 
 export function closeSwarmModal() {

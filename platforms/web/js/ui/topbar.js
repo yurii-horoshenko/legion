@@ -3,14 +3,8 @@
 import { S, PROJECT_AGENTS, PROJECTS } from '../modules/state.js';
 import { $, $$, esc } from '../modules/utils.js';
 import { loadProjectAgents } from '../modules/api.js';
-
-// Imported lazily to avoid circular deps
 import { renderTree } from './sidebar.js';
 import { showDash } from './dashboard.js';
-
-export function syncAddedIds() {
-  return new Set((PROJECT_AGENTS[S.projectId] || []).map(a => a.id));
-}
 
 export function renderProjBtn() {
   const p = PROJECTS.find(x => x.id === S.projectId);
@@ -37,6 +31,9 @@ export function renderProjList(filter = '') {
       S.projectId = el.dataset.id;
       S.agentId = null;
       if (!PROJECT_AGENTS[S.projectId]) await loadProjectAgents(S.projectId);
+      // Update addedAgentIds for the new project
+      const { syncAddedIds } = await import('./catalog.js');
+      syncAddedIds();
       closeProj();
       renderProjBtn();
       renderTree();

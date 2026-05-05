@@ -1,0 +1,371 @@
+// ── Tasks view ─────────────────────────────────────────────────────────────
+
+import { S, PROJECT_AGENTS } from '../modules/state.js';
+import { $, $$, esc } from '../modules/utils.js';
+import { fetchIntegrations, setIntegCache } from '../modules/api.js';
+import { showView } from './dashboard.js';
+import { renderTree } from './sidebar.js';
+
+let _currentTaskSrc = 'local';
+let _assignPending = {};
+
+export function showTasks() {
+  showView('view-tasks');
+  _currentTaskSrc = 'local';
+  $$('.tasks-src-btn').forEach(b => b.classList.toggle('on', b.dataset.src === 'local'));
+  renderProjectTasks('local');
+}
+
+export function getCurrentTaskSrc() { return _currentTaskSrc; }
+
+export async function renderProjectTasks(src) {
+  if (!S.projectId) return;
+  _currentTaskSrc = src;
+  const body = $('#tasks-body');
+  if (!body) return;
+  body.innerHTML = '<div class="tasks-loading">Loading…</div>';
+
+  try {
+    if (src === 'local') {
+      const r = await fetch(`/api/projects/${S.projectId}/tasks`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const tasks = await r.json();
+
+      if (!tasks.length) {
+        body.innerHTML = '<div class="tasks-empty">No tasks yet — add tasks to your agents.</div>';
+        return;
+      }
+
+      const STATUSES   = ['in-progress', 'backlog', 'done', 'cancelled'];
+      const STATUS_LBL = { 'in-progress': 'In Progress', backlog: 'Backlog', done: 'Done', cancelled: 'Cancelled' };
+      const grouped    = {};
+      for (const t of tasks) {
+        const s = t.status || 'backlog';
+        (grouped[s] = grouped[s] || []).push(t);
+      }
+
+      let html = '';
+      for (const s of STATUSES) {
+        const items = grouped[s];
+        if (!items?.length) continue;
+        html += `<div class="tasks-group">
+          <div class="tasks-group-header">
+            <span class="tasks-group-dot tasks-dot-${esc(s)}"></span>
+            <span class="tasks-group-label">${STATUS_LBL[s] || s}</span>
+            <span class="tasks-group-count">${items.length}</span>
+          </div>
+          <div class="tasks-group-body">
+            ${items.map(t => `
+              <div class="tasks-row" data-id="${esc(t.id)}" data-aid="${esc(t.agentId)}">
+                <span class="tasks-row-title">${esc(t.title || 'Untitled')}</span>
+                <span class="tasks-row-agent">${esc(t.agentEmoji || '🤖')} ${esc(t.agentName || '')}</span>
+                ${t.priority ? `<span class="tasks-row-pri tasks-pri-${esc(t.priority)}">${esc(t.priority)}</span>` : ''}
+                ${t.swarmId ? `<span class="tasks-row-swarm" title="Swarm task">⚡</span>` : ''}
+              </div>
+            `).join('')}
+          </div>
+        </div>`;
+      }
+      body.innerHTML = html || '<div class="tasks-empty">No tasks found.</div>';
+
+      $$('.tasks-row', body).forEach(row => {
+        row.addEventListener('click', () => {
+          const aid   = row.dataset.aid;
+          const agent = (PROJECT_AGENTS[S.projectId] || []).find(a => a.id === aid);
+          if (!agent) return;
+          S.agentId = aid;
+          renderTree();
+          import('./agent-panel.js').then(({ selectAgent }) => {
+            selectAgent(aid);
+            setTimeout(() => { $('[data-tab="tasks"].a-tab')?.click(); }, 80);
+          });
+        });
+      });
+
+    } else if (src === 'linear') {
+      const integ = await fetchIntegrations();
+      if (!integ.linear?.apiKey) {
+        body.innerHTML = `<div class="tasks-empty">Linear not configured. Go to <b>Settings → Integrations</b> to add your API key.</div>`;
+        return;
+      }
+      const r = await fetch(`/api/projects/${S.projectId}/linear/issues`);
+      if (!r.ok) { const e = await r.json(); throw new Error(e.error || `HTTP ${r.status}`); }
+      const issues = await r.json();
+
+      if (!issues.length) {
+        body.innerHTML = '<div class="tasks-empty">No Linear issues found.</div>';
+        return;
+      }
+
+      const STATE_ORDER = ['started', 'inProgress', 'unstarted', 'backlog', 'completed', 'cancelled', 'triage'];
+      const STATE_LBL   = { started: 'In Progress', inProgress: 'In Progress', unstarted: 'Todo', backlog: 'Backlog', completed: 'Done', cancelled: 'Cancelled', triage: 'Triage' };
+      const grouped     = {};
+      for (const issue of issues) {
+        const st = issue.state?.type || 'backlog';
+        (grouped[st] = grouped[st] || []).push(issue);
+      }
+      const allStates = [...new Set([...STATE_ORDER, ...Object.keys(grouped)])];
+      const agents     = PROJECT_AGENTS[S.projectId] || [];
+      const agentLabels = integ.agentLabels || [];
+
+      const getIssueAgent = (issue) => {
+        for (const lbl of (issue.labels?.nodes || [])) {
+          const al = agentLabels.find(x => x.labelId === lbl.id);
+          if (al) return al;
+        }
+        return null;
+      };
+
+      let html = `<div class="tasks-linear-toolbar">
+        <span class="tasks-linear-count">${issues.length} issue${issues.length !== 1 ? 's' : ''}</span>
+        <button class="btn-assign-tags" id="btn-manage-assign">⚙ Manage Assignments</button>
+      </div>`;
+
+      for (const st of allStates) {
+        const items = grouped[st];
+        if (!items?.length) continue;
+        html += `<div class="tasks-group">
+          <div class="tasks-group-header">
+            <span class="tasks-group-dot" style="background:${esc(items[0].state?.color || '#888')}"></span>
+            <span class="tasks-group-label">${STATE_LBL[st] || st}</span>
+            <span class="tasks-group-count">${items.length}</span>
+          </div>
+          <div class="tasks-group-body">
+            ${items.map(issue => {
+              const assigned = getIssueAgent(issue);
+              const agentName = assigned ? (agents.find(a => a.id === assigned.agentId)?.name || assigned.agentName || '') : '';
+              return `
+              <div class="tasks-row linear-issue">
+                <span class="tasks-row-id">${esc(issue.identifier || '')}</span>
+                <span class="tasks-row-title">${esc(issue.title || 'Untitled')}</span>
+                ${agentName ? `<span class="tasks-row-assigned">→ ${esc(agentName)}</span>` : '<span class="tasks-row-unassigned">unassigned</span>'}
+                <span class="linear-badge">Linear</span>
+                ${issue.priorityLabel ? `<span class="tasks-row-pri">${esc(issue.priorityLabel)}</span>` : ''}
+              </div>`;
+            }).join('')}
+          </div>
+        </div>`;
+      }
+      body.innerHTML = html;
+
+      $('#btn-manage-assign')?.addEventListener('click', () => openAssignmentPanel(issues, integ));
+    }
+  } catch (e) {
+    body.innerHTML = `<div class="tasks-error">Failed to load: ${esc(e.message)}</div>`;
+  }
+}
+
+// ── Assignment Panel ───────────────────────────────────────────────────────
+
+export function closeAssignmentPanel() {
+  const el = $('#assign-panel-overlay');
+  if (el) el.remove();
+  _assignPending = {};
+}
+
+export function openAssignmentPanel(issues, integ) {
+  closeAssignmentPanel();
+  const agents     = PROJECT_AGENTS[S.projectId] || [];
+  const agentLabels = integ.agentLabels || [];
+
+  const getIssueAgent = (issue) => {
+    for (const lbl of (issue.labels?.nodes || [])) {
+      const al = agentLabels.find(x => x.labelId === lbl.id);
+      if (al) return al.agentId;
+    }
+    return '';
+  };
+
+  const agentOpts = agents.map(a =>
+    `<option value="${esc(a.id)}">${esc(a.linearLabelName || a.name)}</option>`
+  ).join('');
+
+  const rows = issues.map(issue => {
+    const cur = getIssueAgent(issue);
+    return `
+      <tr class="assign-row" data-issue-id="${esc(issue.id)}">
+        <td class="assign-id">${esc(issue.identifier || '')}</td>
+        <td class="assign-title">${esc(issue.title || 'Untitled')}</td>
+        <td class="assign-agent-cell">
+          <select class="assign-agent-sel field-input" data-issue-id="${esc(issue.id)}">
+            <option value="">— Unassigned —</option>
+            ${agentOpts}
+          </select>
+        </td>
+      </tr>`;
+  }).join('');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay on';
+  overlay.id = 'assign-panel-overlay';
+  overlay.innerHTML = `
+    <div class="modal assign-modal">
+      <div class="assign-modal-head">
+        <div class="modal-title">Manage Assignments</div>
+        <div class="assign-modal-actions">
+          <button class="btn-assign-ai" id="btn-auto-assign">⚡ AI Auto-assign</button>
+          <button class="btn-assign-apply" id="btn-apply-assign" disabled>Apply to Linear</button>
+          <button class="btn-cancel" id="btn-close-assign">Cancel</button>
+        </div>
+      </div>
+      <div class="assign-ai-log" id="assign-ai-log" style="display:none"></div>
+      <div class="assign-table-wrap">
+        <table class="assign-table">
+          <thead><tr>
+            <th>ID</th><th>Issue</th><th>Assign to Agent</th>
+          </tr></thead>
+          <tbody id="assign-tbody">${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  // Pre-fill current assignments
+  for (const issue of issues) {
+    const cur = getIssueAgent(issue);
+    const sel = overlay.querySelector(`select[data-issue-id="${issue.id}"]`);
+    if (sel && cur) sel.value = cur;
+  }
+
+  // Track changes
+  overlay.querySelectorAll('.assign-agent-sel').forEach(sel => {
+    sel.addEventListener('change', () => {
+      _assignPending[sel.dataset.issueId] = sel.value;
+      $('#btn-apply-assign').disabled = Object.keys(_assignPending).length === 0;
+    });
+  });
+
+  $('#btn-close-assign').addEventListener('click', closeAssignmentPanel);
+  overlay.addEventListener('click', e => { if (e.target === overlay) closeAssignmentPanel(); });
+
+  $('#btn-auto-assign').addEventListener('click', () => runAutoAssign(issues, agents, overlay));
+  $('#btn-apply-assign').addEventListener('click', () => applyAssignments(issues, integ, overlay));
+}
+
+async function runAutoAssign(issues, agents, overlay) {
+  const btn    = overlay.querySelector('#btn-auto-assign');
+  const logEl  = overlay.querySelector('#assign-ai-log');
+  btn.disabled = true; btn.textContent = '…';
+  logEl.style.display = '';
+  logEl.innerHTML = '<div class="assign-log-row">Starting AI analysis…</div>';
+
+  try {
+    const es = new EventSource(`/api/projects/${S.projectId}/linear/auto-assign`);
+    es.close();
+
+    const r = await fetch(`/api/projects/${S.projectId}/linear/auto-assign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ issues }),
+    });
+
+    const reader = r.body.getReader();
+    const dec    = new TextDecoder();
+    let   buf    = '';
+    let   result = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        try {
+          const d = JSON.parse(line.slice(5).trim());
+          if (d.type === 'progress') {
+            logEl.innerHTML += `<div class="assign-log-row">${esc(d.message)}</div>`;
+            logEl.scrollTop = logEl.scrollHeight;
+          }
+          if (d.type === 'done')  result = d.result;
+          if (d.type === 'error') { logEl.innerHTML += `<div class="assign-log-row assign-log-err">${esc(d.message)}</div>`; }
+        } catch {}
+      }
+    }
+
+    if (result?.assignments?.length) {
+      let applied = 0;
+      for (const asgn of result.assignments) {
+        const sel = overlay.querySelector(`select[data-issue-id="${asgn.issueId}"]`);
+        if (sel && asgn.agentId) {
+          sel.value = asgn.agentId;
+          if (sel.value === asgn.agentId) {
+            _assignPending[asgn.issueId] = asgn.agentId;
+            applied++;
+          }
+        }
+      }
+      logEl.innerHTML += `<div class="assign-log-row assign-log-ok">✓ ${applied} assignments suggested — review and click "Apply to Linear"</div>`;
+      $('#btn-apply-assign').disabled = applied === 0;
+    }
+  } catch (e) {
+    logEl.innerHTML += `<div class="assign-log-row assign-log-err">Error: ${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false; btn.textContent = '⚡ AI Auto-assign';
+  }
+}
+
+async function applyAssignments(issues, integ, overlay) {
+  const btn      = overlay.querySelector('#btn-apply-assign');
+  const logEl    = overlay.querySelector('#assign-ai-log');
+  const agents   = PROJECT_AGENTS[S.projectId] || [];
+  const agentLabelsCurrent = integ.agentLabels || [];
+  logEl.style.display = '';
+  btn.disabled = true; btn.textContent = 'Applying…';
+
+  const log = (msg, cls = '') => {
+    logEl.innerHTML += `<div class="assign-log-row ${cls}">${esc(msg)}</div>`;
+    logEl.scrollTop = logEl.scrollHeight;
+  };
+
+  try {
+    const allAgentLabelIds = agentLabelsCurrent.map(x => x.labelId);
+    const teamId = integ.linear?.defaultTeamId || '';
+    let changed = 0;
+
+    for (const [issueId, agentId] of Object.entries(_assignPending)) {
+      if (!agentId) continue;
+      const agent  = agents.find(a => a.id === agentId);
+      if (!agent) continue;
+      const lName  = agent.linearLabelName || agent.name;
+
+      let labelEntry = agentLabelsCurrent.find(x => x.agentId === agentId);
+      if (!labelEntry) {
+        log(`Creating label "${lName}" in Linear…`);
+        const cr = await fetch(`/api/projects/${S.projectId}/linear/labels`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: lName, color: agent.color || '#94A3B8', teamId, agentId }),
+        });
+        if (!cr.ok) { const e = await cr.json(); log(`✗ Failed to create label: ${e.error}`, 'assign-log-err'); continue; }
+        const newLabel = await cr.json();
+        labelEntry = { agentId, labelId: newLabel.id, labelName: newLabel.name };
+        agentLabelsCurrent.push(labelEntry);
+        allAgentLabelIds.push(newLabel.id);
+        setIntegCache({ ...integ, agentLabels: agentLabelsCurrent });
+      }
+
+      const issue = issues.find(i => i.id === issueId);
+      const curLabels = (issue?.labels?.nodes || []).map(l => l.id);
+      const newLabels = [...curLabels.filter(id => !allAgentLabelIds.includes(id)), labelEntry.labelId];
+
+      log(`Assigning "${lName}" → ${issue?.identifier || issueId}…`);
+      const pr = await fetch(`/api/projects/${S.projectId}/linear/issues/${issueId}/labels`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ labelIds: newLabels }),
+      });
+      if (!pr.ok) { const e = await pr.json(); log(`✗ ${e.error}`, 'assign-log-err'); continue; }
+      changed++;
+    }
+
+    log(`✓ Applied ${changed} assignment${changed !== 1 ? 's' : ''}`, 'assign-log-ok');
+    _assignPending = {};
+    btn.textContent = '✓ Done';
+    setTimeout(() => { closeAssignmentPanel(); renderProjectTasks('linear'); }, 1500);
+  } catch (e) {
+    log(`Error: ${e.message}`, 'assign-log-err');
+    btn.disabled = false; btn.textContent = 'Apply to Linear';
+  }
+}

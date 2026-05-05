@@ -152,13 +152,6 @@
         </div>
       </div>
 
-      <div class="team-map-section">
-        <div class="panel-top">
-          <span class="panel-label">Team Map</span>
-          <span class="team-map-hint">Pipeline call hierarchy</span>
-        </div>
-        <div id="team-map"></div>
-      </div>
     </div>
 
     <!-- Agent catalog -->
@@ -239,11 +232,20 @@
     <div id="view-overview">
       <div class="dash-headline">
         <div>
-          <div class="dash-title">Overview</div>
-          <div class="dash-meta">Project settings and folder configuration</div>
+          <div class="dash-title" id="overview-title">Overview</div>
+          <div class="dash-meta" id="overview-meta">Project settings and folder configuration</div>
         </div>
       </div>
-      <div class="overview-form" id="overview-form"></div>
+      <div class="ov-tabs-row">
+        <button class="ov-tab on" data-ovtab="settings">Overview</button>
+        <button class="ov-tab"   data-ovtab="teammap">Team Map</button>
+      </div>
+      <div class="ov-tab-body on" data-ovtab="settings">
+        <div class="overview-form" id="overview-form"></div>
+      </div>
+      <div class="ov-tab-body" data-ovtab="teammap">
+        <div id="team-map"></div>
+      </div>
     </div>
 
     <!-- Tasks -->
@@ -442,7 +444,6 @@
   </div>
 </div>
 
-<script src="js/i18n.js?v=2"></script>
-<script src="js/app.js?v=2"></script>
+<script type="module" src="js/app.js?v=3"></script>
 </body>
 </html>

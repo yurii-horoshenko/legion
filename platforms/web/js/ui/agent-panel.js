@@ -2,7 +2,8 @@
 
 import { S, MODELS, PROVIDERS, PROJECT_AGENTS, PROJECTS } from '../modules/state.js';
 import { $, $$, esc, initials } from '../modules/utils.js';
-import { AGENT_REGISTRY, apiRemoveAgent, fetchProviders, fetchModels } from '../modules/api.js';
+import { AGENT_REGISTRY } from '../modules/state.js';
+import { apiRemoveAgent, fetchProviders, fetchModels } from '../modules/api.js';
 import { renderTree } from './sidebar.js';
 import { showView, showDash } from './dashboard.js';
 import { renderAgentOverview } from '../tabs/overview.js';
@@ -15,6 +16,9 @@ import { renderCron } from '../tabs/cron.js';
 import { renderChat } from '../tabs/chat.js';
 import { renderSkills } from '../tabs/skills.js';
 import { renderConfig } from '../tabs/config.js';
+
+// showAgent is an alias for selectAgent (used by tasks-view)
+export function showAgent(a) { selectAgent(a.id); }
 
 export function selectAgent(id) {
   S.agentId = id;

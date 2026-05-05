@@ -53,7 +53,7 @@ async function translateText(text) {
   return data?.responseData?.translatedText || text;
 }
 
-window.i18n = {
+const i18n = {
   init,
   t,
   setLang,
@@ -61,3 +61,6 @@ window.i18n = {
   translateText,
   get lang() { return currentLang; },
 };
+
+window.i18n = i18n;
+export default i18n;

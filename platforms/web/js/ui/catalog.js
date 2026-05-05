@@ -7,7 +7,7 @@ import { $, $$, esc } from '../modules/utils.js';
 import { apiAddAgent } from '../modules/api.js';
 import { renderTree } from './sidebar.js';
 import { showView, showDash } from './dashboard.js';
-import { selectAgent } from './agent-panel.js';
+// selectAgent imported lazily to avoid circular with overview.js
 import i18n from '../i18n.js';
 
 export function getAddedAgentIds() { return addedAgentIds; }
@@ -144,7 +144,8 @@ export function renderCatalogGrid() {
     card.addEventListener('click', e => {
       if (e.target.classList.contains('cat-add-btn')) return;
       const id = card.dataset.id;
-      selectAgent(id);
+      // Use window global to avoid circular import
+      if (window.__legionSelectAgent) window.__legionSelectAgent(id);
     });
   });
 }

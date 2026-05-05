@@ -61,6 +61,39 @@
 .stab-body { display: none; }
 .stab-body.on { display: block; }
 
+/* ── Overview tab switcher ── */
+.ov-tabs-row {
+  display: flex;
+  padding: 0 4px;
+  border-bottom: 1px solid var(--border);
+  gap: 2px;
+  margin-bottom: 24px;
+  flex-shrink: 0;
+}
+
+.ov-tab {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  padding: 10px 14px;
+  color: var(--text-3);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  transition: color var(--t), border-color var(--t);
+  background: none;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+}
+
+.ov-tab:hover { color: var(--text-2); }
+.ov-tab.on    { color: var(--text); border-bottom-color: var(--accent); }
+
+.ov-tab-body { display: none; }
+.ov-tab-body.on { display: block; }
+
 /* ── Overview tab ── */
 .overview-fields {
   max-width: 520px;

@@ -1,6 +1,7 @@
 // ── API helpers ────────────────────────────────────────────────────────────
 
-import { S, PROJECT_AGENTS, PROJECTS, AGENT_REGISTRY, PROVIDERS, setProviders, MODELS, setModels } from './state.js';
+import { S, PROJECT_AGENTS, PROJECTS, AGENT_REGISTRY, PROVIDERS, setProviders, MODELS, setModels,
+         setProjects, setAddedAgentIds } from './state.js';
 
 // ── Agent store helpers ────────────────────────────────────────────────────
 
@@ -110,7 +111,6 @@ export async function apiDeleteModel(id) {
 // ── Projects ───────────────────────────────────────────────────────────────
 
 export async function loadProjects() {
-  const { setProjects } = await import('./state.js');
   let projects = [];
   try {
     const res = await fetch('/api/projects');
@@ -119,12 +119,9 @@ export async function loadProjects() {
   projects.sort((a, b) => a.name.localeCompare(b.name));
   setProjects(projects);
   if (projects.length) {
-    const { S } = await import('./state.js');
     S.projectId = projects[0].id;
     await loadProjectAgents(S.projectId);
-    const { setAddedAgentIds } = await import('./state.js');
-    const { PROJECT_AGENTS: PA } = await import('./state.js');
-    setAddedAgentIds(new Set((PA[S.projectId] || []).map(a => a.id)));
+    setAddedAgentIds(new Set((PROJECT_AGENTS[S.projectId] || []).map(a => a.id)));
   }
   return projects;
 }

@@ -152,7 +152,7 @@ Every agent in a project gets its own directory:
 | Tab | What it does |
 |-----|-------------|
 | **Overview** | Description, capabilities, identity summary |
-| **Chat** | Inline conversation using the agent's configured model |
+| **Chat** | Real AI chat — agent introduces itself on open using its configured model |
 | **Workers** | Persistent background processes with live status indicators |
 | **Memories** | Persistent / Temporary / Todo memory, synced to `MEMORY.md` on disk |
 | **Tasks** | Kanban board — Backlog → In Progress → Ready → Done |
@@ -160,7 +160,7 @@ Every agent in a project gets its own directory:
 | **Tools** | Tool configuration *(runtime integration in progress)* |
 | **Channels** | HTTP · Telegram · Discord · Webhook · MCP |
 | **Cron** | Scheduled jobs with cron expressions |
-| **Config** | Model selection and markdown file editors |
+| **Config** | Model selection, Claude Code activation, markdown file editors |
 
 ---
 
@@ -184,19 +184,53 @@ Legion ships with the full [agency-agents](https://github.com/msitarzewski/agenc
 
 ```
 legion/
-├── bin/legion.js              ← HTTP server — Node.js stdlib only, zero dependencies
+├── bin/
+│   ├── legion.js          ← CLI entry point — argument parsing only
+│   └── server.js          ← HTTP server setup, route registration, static serving
+├── lib/
+│   ├── catalog.js         ← Markdown catalog builder
+│   ├── http.js            ← postJson, getJson, json(), readBody()
+│   ├── io.js              ← all JSON read/write helpers (projects, agents, models…)
+│   ├── agents-fs.js       ← agent file system operations
+│   ├── ai.js              ← AI provider abstraction (all 6 providers)
+│   └── visor.js           ← Visor bulletin checks
+├── routes/
+│   ├── projects.js        ← /api/projects
+│   ├── agents.js          ← /api/projects/:pid/agents
+│   ├── chat.js            ← /api/.../chat, /api/.../chat/intro, /api/proxy/v1/messages
+│   ├── skills.js          ← /api/.../skills, suggest-skills
+│   ├── config.js          ← /api/models, /api/providers, /api/config
+│   ├── analysis.js        ← /api/projects/:pid/analyze (SSE)
+│   ├── linear.js          ← /api/projects/:pid/linear/*
+│   └── monitoring.js      ← /api/projects/:pid/visor, tasks, pipelines
 ├── core/
-│   ├── agents/catalog/        ← 174+ agent .md files with YAML frontmatter
-│   ├── config/                ← projects, agents, providers, models (JSON on disk)
-│   └── prompts/analyze.md     ← AI analysis prompt — edit to change recommendation logic
+│   ├── agents/catalog/    ← 174+ agent .md files with YAML frontmatter
+│   ├── config/
+│   │   ├── projects.json
+│   │   ├── agents/        ← one {pid}.json per project (auto-cleaned on delete)
+│   │   ├── providers.json
+│   │   ├── models.json
+│   │   ├── .pkeys.json    ← provider API keys (gitignored)
+│   │   └── .keys.json     ← model API keys (gitignored)
+│   └── prompts/           ← AI analysis prompts — edit to change recommendation logic
 └── platforms/web/
-    ├── index.html             ← single HTML file — the entire frontend
-    ├── js/app.js              ← full SPA, vanilla JS
-    ├── js/i18n.js             ← EN / RU localization
-    └── css/app.css            ← all styles
+    ├── index.html
+    ├── js/
+    │   ├── app.js         ← bootstrap & event listeners
+    │   ├── i18n.js        ← EN / RU localization
+    │   ├── modules/       ← state, utils, api
+    │   ├── ui/            ← topbar, sidebar, dashboard, agent-panel, catalog, analyze
+    │   ├── tabs/          ← one file per agent tab (chat, tasks, memories…)
+    │   └── modals/        ← project, decompose, mini modals
+    └── css/
+        ├── base.css / layout.css / sidebar.css
+        ├── dashboard.css / agent-panel.css
+        ├── modals.css / settings.css
+        ├── analyze.css / tasks-view.css
+        └── app.css        ← kept for reference; index.html loads component files
 ```
 
-The server is a single file. The frontend is a single file. No framework, no bundler, no runtime dependencies.
+No framework. No bundler. No runtime dependencies. Node.js stdlib only.
 
 Keys are stored in `core/config/.pkeys.json` and `core/config/.keys.json` — both gitignored, never leave your machine.
 
@@ -213,6 +247,9 @@ Keys are stored in `core/config/.pkeys.json` and `core/config/.keys.json` — bo
 | Agent pipelines | ✅ Done |
 | Bidirectional memory sync | ✅ Done |
 | EN / RU localization | ✅ Done |
+| Real AI chat with per-agent model routing | ✅ Done |
+| Ollama proxy for Claude Code (`/api/proxy/v1/messages`) | ✅ Done |
+| Modular server architecture (lib/ + routes/) | ✅ Done |
 | Swift runtime core (Channel / Branch / Worker) | 🔲 Planned |
 | Real-time WebSocket activity feed | 🔲 Planned |
 | Skills registry integration | 🔲 Planned |

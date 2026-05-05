@@ -2,7 +2,8 @@
 
 import { S, PROJECT_AGENTS, PROJECTS } from '../modules/state.js';
 import { $, esc, initials } from '../modules/utils.js';
-import { AGENT_REGISTRY, apiRemoveAgent } from '../modules/api.js';
+import { AGENT_REGISTRY } from '../modules/state.js';
+import { apiRemoveAgent } from '../modules/api.js';
 import { renderTree } from '../ui/sidebar.js';
 import { showDash } from '../ui/dashboard.js';
 import i18n from '../i18n.js';
