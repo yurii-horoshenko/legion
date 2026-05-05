@@ -155,6 +155,8 @@ module.exports = function createAgentRoutes(ctx) {
       const filePath = path.join(project.path, ".legion", "agents", agentId, filename);
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       fs.writeFileSync(filePath, body.content || "");
+      const rebuildFiles = ["IDENTITY.md", "SOUL.md", "CONTEXT.md", "MEMORY.md", "SKILLS.md"];
+      if (rebuildFiles.includes(filename)) agentFs.buildClaudeAgentMd(project, agentId);
       http.json(res, 200, { ok: true });
       return true;
     }
