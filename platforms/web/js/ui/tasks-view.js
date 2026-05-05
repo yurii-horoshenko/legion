@@ -135,8 +135,13 @@ export async function renderProjectTasks(src) {
 
       const getIssueAgent = (issue) => {
         for (const lbl of (issue.labels?.nodes || [])) {
-          const al = agentLabels.find(x => x.labelId === lbl.id);
-          if (al) return al;
+          const byId = agentLabels.find(x => x.labelId === lbl.id);
+          if (byId) return byId;
+          // fallback: match label name to agent's linearLabelName or name
+          const byName = agents.find(a =>
+            (a.linearLabelName || a.name).toLowerCase() === lbl.name.toLowerCase()
+          );
+          if (byName) return { agentId: byName.id, agentName: byName.name, labelId: lbl.id };
         }
         return null;
       };
@@ -492,8 +497,12 @@ export function openAssignmentPanel(issues, integ) {
 
   const getIssueAgent = (issue) => {
     for (const lbl of (issue.labels?.nodes || [])) {
-      const al = agentLabels.find(x => x.labelId === lbl.id);
-      if (al) return al.agentId;
+      const byId = agentLabels.find(x => x.labelId === lbl.id);
+      if (byId) return byId.agentId;
+      const byName = agents.find(a =>
+        (a.linearLabelName || a.name).toLowerCase() === lbl.name.toLowerCase()
+      );
+      if (byName) return byName.id;
     }
     return '';
   };
@@ -699,7 +708,9 @@ async function applyAssignments(issues, integ, overlay) {
                 labelEntry = { agentId, labelId: existing.id, labelName: existing.name };
                 agentLabelsCurrent.push(labelEntry);
                 allAgentLabelIds.push(existing.id);
-                setIntegCache({ ...integ, agentLabels: agentLabelsCurrent });
+                const updated = { ...integ, agentLabels: agentLabelsCurrent };
+                setIntegCache(updated);
+                fetch(`/api/projects/${S.projectId}/integrations`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updated) });
               }
             }
             if (!labelEntry) { log(`✗ Could not resolve label "${lName}"`, 'assign-log-err'); continue; }
@@ -711,7 +722,9 @@ async function applyAssignments(issues, integ, overlay) {
           labelEntry = { agentId, labelId: newLabel.id, labelName: newLabel.name };
           agentLabelsCurrent.push(labelEntry);
           allAgentLabelIds.push(newLabel.id);
-          setIntegCache({ ...integ, agentLabels: agentLabelsCurrent });
+          const updated = { ...integ, agentLabels: agentLabelsCurrent };
+          setIntegCache(updated);
+          fetch(`/api/projects/${S.projectId}/integrations`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updated) });
         }
       }
 
