@@ -25,29 +25,46 @@ module.exports = function createChatRoutes(ctx) {
       if (!resolved) { http.json(res, 404, { error: `Model '${modelId}' not found or provider not configured` }); return true; }
       const { model: modelObj, provider } = resolved;
 
-      // Collect skill descriptions
+      // Skill names + descriptions
       const userSkillsDir = path.join(os.homedir(), ".claude", "skills");
-      const agentSkills = (agent.skills || []).map(skillId => {
-        let description = skillId;
+      const skillEntries = (agent.skills || []).map(skillId => {
         if (fs.existsSync(userSkillsDir)) {
           const skillMd = path.join(userSkillsDir, skillId, "SKILL.md");
           if (fs.existsSync(skillMd)) {
             const content = fs.readFileSync(skillMd, "utf8").slice(0, 400);
             const m = content.match(/^description:\s*(.+)/m);
-            if (m) description = `${skillId}: ${m[1].trim().replace(/^["']|["']$/g, "")}`;
+            if (m) return `**${skillId}** — ${m[1].trim().replace(/^["']|["']$/g, "")}`;
           }
         }
-        return description;
+        return `**${skillId}**`;
       });
+      const skillsLine = skillEntries.length ? skillEntries.join(", ") : "None configured";
 
-      const skillsLine = agentSkills.length
-        ? `\nAvailable skills/tools: ${agentSkills.join("; ")}`
-        : "";
+      // IDENTITY.md excerpt
+      const project = io.readProjects().find(p => p.id === pid);
+      let identitySection = "";
+      if (project?.path) {
+        const identityFile = path.join(project.path, ".legion", "agents", aid, "IDENTITY.md");
+        if (fs.existsSync(identityFile)) {
+          const raw = fs.readFileSync(identityFile, "utf8").slice(0, 1200);
+          identitySection = `## Identity (from IDENTITY.md)\n\n${raw}`;
+        }
+      }
 
-      const langInstruction = ai.langDirective(body.lang);
-      const systemPrompt = `You are ${agent.name}. ${agent.role}${skillsLine}
+      // Model display name
+      const modelName     = modelObj.name || modelObj.modelId || modelId;
+      const providerLabel = { anthropic: "Anthropic", openai: "OpenAI", google: "Google", mistral: "Mistral", ollama: "Ollama", "claude-cli": "Claude CLI" }[provider.type] || provider.type;
 
-Introduce yourself in 3-5 sentences. Cover: your name, your specialization in this project context, your key capabilities, and any skills/tools you have available. Be concise, direct, and professional. Do not use bullet points — write as flowing text.${langInstruction}`;
+      // Load and fill prompt template
+      const promptFile = path.resolve(__dirname, "../core/prompts/chat-intro.md");
+      const systemPrompt = fs.readFileSync(promptFile, "utf8")
+        .replace("{{agent_name}}",    agent.name || aid)
+        .replace("{{agent_role}}",    agent.role || agent.description || "General-purpose agent")
+        .replace("{{model_name}}",    modelName)
+        .replace("{{provider_type}}", providerLabel)
+        .replace("{{skills_line}}",   skillsLine)
+        .replace("{{identity_section}}", identitySection)
+        .replace("{{lang_directive}}",   ai.langDirective(body.lang) || "");
 
       try {
         const intro = await ai.callAIMessages(modelObj, provider, systemPrompt, [{ role: "user", content: "Introduce yourself." }]);
