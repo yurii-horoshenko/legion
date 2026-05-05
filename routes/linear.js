@@ -167,45 +167,53 @@ module.exports = function createLinearRoutes(ctx) {
           `- id:"${a.id}" | name:${a.name} | role:${a.role || "—"}`
         ).join("\n");
 
-        const issueList = issues.map((iss, i) =>
-          `${i + 1}. id:"${iss.id}" | ${iss.identifier || ""}: ${iss.title || "Untitled"} — ${(iss.description || "").slice(0, 150)}`
-        ).join("\n");
-
         const sysPrompt = [
           `You are assigning Linear issues to the most appropriate agents based on their roles.`,
           ``,
           `# Agents`,
           agentList,
           ``,
-          `# Issues to assign (${issues.length} total)`,
-          issueList,
-          ``,
           `Return ONLY a valid JSON array (no markdown, no explanation):`,
           `[{"issueId":"...","agentId":"...","agentName":"...","reason":"one sentence"},...]`,
-          `Include every issue. If no agent fits well, pick the closest match.`,
+          `Include every issue in the batch. If no agent fits well, pick the closest match.`,
         ].join("\n");
 
-        prog(`Sending ${issues.length} issues to AI in one batch…`);
+        const BATCH_SIZE = 10;
+        const batches = [];
+        for (let i = 0; i < issues.length; i += BATCH_SIZE) batches.push(issues.slice(i, i + BATCH_SIZE));
+
+        prog(`Starting — ${issues.length} issues, ${batches.length} batches of ${BATCH_SIZE}`);
 
         let assigned = 0;
-        try {
-          const raw     = await ai.callAIMessages(model, provider, sysPrompt, [{ role: "user", content: "Assign all issues." }]);
-          const results = http.parseAIJson(raw);
-          const list    = Array.isArray(results) ? results : (results.assignments || []);
+        const assignedIds = new Set();
 
-          for (const item of list) {
-            if (!item.issueId || !item.agentId) continue;
-            send("assignment", { issueId: item.issueId, agentId: item.agentId, agentName: item.agentName || "", reason: item.reason || "" });
-            assigned++;
-          }
+        for (let bIdx = 0; bIdx < batches.length; bIdx++) {
+          const batch = batches[bIdx];
+          prog(`Batch ${bIdx + 1} / ${batches.length} — processing ${batch.length} issues…`);
 
-          // Flag any issues the AI skipped
-          const assignedIds = new Set(list.map(x => x.issueId));
-          for (const iss of issues) {
-            if (!assignedIds.has(iss.id)) send("assignment-error", { issueId: iss.id, message: "Not assigned by AI" });
+          const issueList = batch.map((iss, i) =>
+            `${i + 1}. id:"${iss.id}" | ${iss.identifier || ""}: ${iss.title || "Untitled"} — ${(iss.description || "").slice(0, 150)}`
+          ).join("\n");
+
+          try {
+            const raw  = await ai.callAIMessages(model, provider, sysPrompt, [{ role: "user", content: issueList }]);
+            const list = (() => { const r = http.parseAIJson(raw); return Array.isArray(r) ? r : (r.assignments || []); })();
+
+            for (const item of list) {
+              if (!item.issueId || !item.agentId) continue;
+              send("assignment", { issueId: item.issueId, agentId: item.agentId, agentName: item.agentName || "", reason: item.reason || "" });
+              assignedIds.add(item.issueId);
+              assigned++;
+            }
+            prog(`Batch ${bIdx + 1} / ${batches.length} done — ${assigned} assigned so far`);
+          } catch (e) {
+            prog(`Batch ${bIdx + 1} failed: ${e.message}`);
+            for (const iss of batch) send("assignment-error", { issueId: iss.id, message: "Batch failed" });
           }
-        } catch (e) {
-          fail("Auto-assign failed: " + e.message); return;
+        }
+
+        for (const iss of issues) {
+          if (!assignedIds.has(iss.id)) send("assignment-error", { issueId: iss.id, message: "Not assigned" });
         }
 
         prog(`Done — ${assigned}/${issues.length} assigned`);
