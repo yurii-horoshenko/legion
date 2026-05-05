@@ -135,6 +135,27 @@ Introduce yourself in 3-5 sentences. Cover: your name, your specialization in th
         return true;
       }
 
+      if (provider.type === "claude-cli") {
+        const lastUser = messages.filter(m => m.role === "user").pop()?.content || "";
+        const prompt = system ? `${system}\n\nUser: ${lastUser}` : lastUser;
+        if (stream) {
+          await ai.streamClaudeCLIToAnthropicSSE(res, modelObj, prompt);
+          return true;
+        }
+        try {
+          const text = await ai.callAIMessages(modelObj, provider, system || "", messages);
+          http.json(res, 200, {
+            id: `msg_${Date.now()}`, type: "message", role: "assistant",
+            content: [{ type: "text", text }],
+            model: modelId, stop_reason: "end_turn", stop_sequence: null,
+            usage: { input_tokens: 0, output_tokens: 0 },
+          });
+        } catch (err) {
+          http.json(res, 500, { error: { type: "api_error", message: err.message } });
+        }
+        return true;
+      }
+
       http.json(res, 400, { error: { type: "invalid_request_error", message: `Provider type '${provider.type}' is not supported via the Anthropic-compatible proxy` } });
       return true;
     }

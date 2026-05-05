@@ -143,7 +143,7 @@ module.exports = function createSkillRoutes(ctx) {
         map[pid] = agents;
         io.writePAgents(map);
         const proj = io.readProjects().find(p => p.id === pid);
-        if (proj) agentFs.syncLegionMd(proj, pid);
+        if (proj) { agentFs.syncLegionMd(proj, pid); agentFs.syncSkillsMd(proj, agent); }
       }
       http.json(res, 200, { ok: true, skills: agent.skills });
       return true;
@@ -163,7 +163,7 @@ module.exports = function createSkillRoutes(ctx) {
       map[pid] = agents;
       io.writePAgents(map);
       const proj = io.readProjects().find(p => p.id === pid);
-      if (proj) agentFs.syncLegionMd(proj, pid);
+      if (proj) { agentFs.syncLegionMd(proj, pid); agentFs.syncSkillsMd(proj, agent); }
       http.json(res, 200, { ok: true, skills: agent.skills });
       return true;
     }

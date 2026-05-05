@@ -100,7 +100,7 @@ module.exports = function createAgentRoutes(ctx) {
       const project   = io.readProjects().find(p => p.id === projectId);
       if (!project?.path) { http.json(res, 404, { error: "Project has no path" }); return true; }
       const agentDir  = path.join(project.path, ".legion", "agents", agentId);
-      const DEFAULT_FILES = ["AGENTS.md", "IDENTITY.md", "SOUL.md", "USER.md", "MEMORY.md", "CONTEXT.md", "SKILLS.md"];
+      const DEFAULT_FILES = ["IDENTITY.md", "SOUL.md", "USER.md", "MEMORY.md", "CONTEXT.md", "SKILLS.md"];
       const files = fs.existsSync(agentDir)
         ? fs.readdirSync(agentDir).filter(f => f.endsWith(".md") && f !== "agent.md").sort()
         : DEFAULT_FILES;
@@ -117,7 +117,7 @@ module.exports = function createAgentRoutes(ctx) {
       if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(agentId)) { http.json(res, 400, { error: "Invalid agent ID" }); return true; }
       const project   = io.readProjects().find(p => p.id === projectId);
       if (!project?.path) { http.json(res, 404, { error: "Project has no path" }); return true; }
-      const allowed = ["agent.md", "AGENTS.md", "IDENTITY.md", "SOUL.md", "USER.md", "MEMORY.md", "CONTEXT.md", "SKILLS.md", "PIPELINE.md"];
+      const allowed = ["agent.md", "IDENTITY.md", "SOUL.md", "USER.md", "MEMORY.md", "CONTEXT.md", "SKILLS.md", "PIPELINE.md"];
       if (!allowed.includes(filename)) { http.json(res, 400, { error: "Invalid file" }); return true; }
       const agentDir = path.join(project.path, ".legion", "agents", agentId);
       // Migrate flat file → directory if needed
@@ -150,7 +150,7 @@ module.exports = function createAgentRoutes(ctx) {
       if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(agentId)) { http.json(res, 400, { error: "Invalid agent ID" }); return true; }
       const project   = io.readProjects().find(p => p.id === projectId);
       if (!project?.path) { http.json(res, 404, { error: "Project has no path" }); return true; }
-      const allowed = ["agent.md", "AGENTS.md", "IDENTITY.md", "SOUL.md", "USER.md", "MEMORY.md", "CONTEXT.md", "SKILLS.md", "PIPELINE.md"];
+      const allowed = ["agent.md", "IDENTITY.md", "SOUL.md", "USER.md", "MEMORY.md", "CONTEXT.md", "SKILLS.md", "PIPELINE.md"];
       if (!allowed.includes(filename)) { http.json(res, 400, { error: "Invalid file" }); return true; }
       const filePath = path.join(project.path, ".legion", "agents", agentId, filename);
       fs.mkdirSync(path.dirname(filePath), { recursive: true });

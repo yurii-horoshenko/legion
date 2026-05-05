@@ -57,6 +57,7 @@
   "sk_no_available":     "All your skills are already assigned.",
   "sk_add":              "+ Assign to agent",
   "sk_assign":           "+ Assign",
+  "sk_remove":           "Remove",
   "sk_assign_all":       "⚡ Assign All",
   "sk_all_assigned":     "✓ All assigned",
   "sk_loading":          "Loading…",

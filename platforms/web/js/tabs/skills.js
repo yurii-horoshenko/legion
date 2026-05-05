@@ -17,18 +17,18 @@ export async function renderSkills(a) {
     ${tabDescHtml('skills')}
     <div class="sk-section-header" id="sk-head-installed">
       <span class="sk-section-caret">▾</span>
-      <span>${i18n.t('sk_installed_label')}</span>
+      <span>Assigned to this agent</span>
     </div>
-    <div id="sk-installed">${i18n.t('sk_loading')}</div>
+    <div id="sk-installed">Loading…</div>
     <div class="sk-section-header sk-section-header-mt sk-collapsed" id="sk-head-available">
       <span class="sk-section-caret">▸</span>
-      <span>${i18n.t('sk_available_label')}</span>
+      <span>Available from your skills</span>
     </div>
     <div id="sk-available" style="display:none"></div>
     <div class="sk-section-header sk-section-header-mt" id="sk-head-suggest">
       <span class="sk-section-caret">▾</span>
-      <span>${i18n.t('sk_suggest_label')}</span>
-      <button class="sk-suggest-btn" id="sk-suggest">✦ ${i18n.t('sk_suggest')}</button>
+      <span>AI recommendations</span>
+      <button class="sk-suggest-btn" id="sk-suggest">✦ Suggest Skills</button>
     </div>
     <div id="sk-log" class="sk-log" style="display:none"></div>
     <div id="sk-results"></div>`;
@@ -51,17 +51,22 @@ export async function renderSkills(a) {
 
       if (!installedEl) return;
       if (!agentSkills.length) {
-        installedEl.innerHTML = `<div class="sk-empty">${i18n.t('sk_no_installed')}</div>`;
+        installedEl.innerHTML = `<div class="sk-empty">${i18n.t('sk_no_installed') || 'No skills assigned to this agent yet.'}</div>`;
       } else {
-        installedEl.innerHTML = `<div class="sk-pill-list">${agentSkills.map(id => `
-          <div class="sk-pill">
-            <span class="sk-pill-name">⚡ ${esc(id)}</span>
-            ${descMap[id] ? `<span class="sk-avail-desc">${esc(descMap[id])}</span>` : ''}
-            <button class="sk-pill-remove" data-skill="${esc(id)}">✕</button>
+        installedEl.innerHTML = `<div class="sk-list">${agentSkills.map(id => `
+          <div class="sk-card">
+            <div class="sk-card-head">
+              <span class="sk-type-icon">⚡</span>
+              <span class="sk-card-name">${esc(id)}</span>
+            </div>
+            ${descMap[id] ? `<div class="sk-card-reason">${esc(descMap[id])}</div>` : ''}
+            <div class="sk-card-foot">
+              <button class="sk-pill-remove" data-skill="${esc(id)}">Remove</button>
+            </div>
           </div>`).join('')}</div>`;
         installedEl.querySelectorAll('.sk-pill-remove').forEach(btn => {
           btn.addEventListener('click', async () => {
-            btn.textContent = '…';
+            btn.textContent = '…'; btn.disabled = true;
             await fetch(`/api/projects/${S.projectId}/agents/${a.id}/skills/${btn.dataset.skill}`, { method: 'DELETE' });
             refreshSkillLists();
           });
@@ -71,7 +76,7 @@ export async function renderSkills(a) {
       if (!availableEl) return;
       const notAssigned = available.filter(s => !agentSkillSet.has(s.id));
       if (!notAssigned.length) {
-        availableEl.innerHTML = `<div class="sk-empty">${i18n.t('sk_no_available')}</div>`;
+        availableEl.innerHTML = `<div class="sk-empty">${i18n.t('sk_no_available') || 'All your skills are already assigned.'}</div>`;
       } else {
         availableEl.innerHTML = `<div class="sk-list">${notAssigned.map(s =>
           `<div class="sk-card">
@@ -81,14 +86,14 @@ export async function renderSkills(a) {
             </div>
             ${s.description ? `<div class="sk-card-reason">${esc(s.description)}</div>` : ''}
             <div class="sk-card-foot">
-              <button class="sk-avail-add" data-skill="${esc(s.id)}">${i18n.t('sk_add')}</button>
+              <button class="sk-avail-add" data-skill="${esc(s.id)}">+ Assign</button>
             </div>
           </div>`).join('')}</div>`;
         availableEl.querySelectorAll('.sk-avail-add').forEach(btn => {
           btn.addEventListener('click', async () => {
             btn.textContent = '…'; btn.disabled = true;
             await fetch(`/api/projects/${S.projectId}/agents/${a.id}/skills/${btn.dataset.skill}`, { method: 'POST' });
-            refreshSkillLists();
+            await refreshSkillLists();
           });
         });
       }
@@ -121,14 +126,14 @@ export async function renderSkills(a) {
 
   $('#sk-suggest').addEventListener('click', () => {
     const btn = $('#sk-suggest');
-    if (es) { es.close(); es = null; btn.textContent = `✦ ${i18n.t('sk_suggest')}`; return; }
+    if (es) { es.close(); es = null; btn.textContent = '✦ Suggest Skills'; return; }
 
     const log = $('#sk-log');
     const results = $('#sk-results');
     log.style.display = 'block';
     log.innerHTML = '';
     results.innerHTML = '';
-    btn.textContent = i18n.t('sk_suggesting');
+    btn.textContent = '✦ Analyzing…';
 
     es = new EventSource(`/api/projects/${S.projectId}/agents/${a.id}/suggest-skills`);
 
@@ -145,15 +150,15 @@ export async function renderSkills(a) {
 
       if (d.type === 'done') {
         es.close(); es = null;
-        btn.textContent = `✦ ${i18n.t('sk_suggest')}`;
+        btn.textContent = '✦ Suggest Skills';
         const r = d.result;
-        if (!r?.skills?.length) { results.innerHTML = `<div class="sk-empty">${i18n.t('sk_no_results')}</div>`; return; }
+        if (!r?.skills?.length) { results.innerHTML = `<div class="sk-empty">${i18n.t('sk_no_results') || 'No skill recommendations found.'}</div>`; return; }
 
         results.innerHTML = `
           ${r.summary ? `<div class="sk-summary">${esc(r.summary)}</div>` : ''}
           <div class="sk-results-head">
             <span class="sk-results-count">${r.skills.length} ${r.skills.length === 1 ? 'skill' : 'skills'} recommended</span>
-            <button class="sk-assign-all-btn" id="sk-assign-all">${i18n.t('sk_assign_all')}</button>
+            <button class="sk-assign-all-btn" id="sk-assign-all">⚡ Assign All</button>
           </div>
           <div class="sk-list">
             ${r.skills.map(s => `
@@ -169,7 +174,7 @@ export async function renderSkills(a) {
                 <div class="sk-card-foot">
                   ${s.install ? `<code class="sk-install">${esc(s.install)}</code>` : ''}
                   ${s.url ? `<a class="sk-link" href="${esc(s.url)}" target="_blank">↗ Open</a>` : ''}
-                  <button class="sk-avail-add sk-card-assign" data-skill="${esc(s.name)}">${i18n.t('sk_assign')}</button>
+                  <button class="sk-avail-add sk-card-assign" data-skill="${esc(s.name)}">+ Assign</button>
                 </div>
               </div>`).join('')}
           </div>`;
@@ -191,21 +196,21 @@ export async function renderSkills(a) {
             fetch(`/api/projects/${S.projectId}/agents/${a.id}/skills/${s.name}`, { method: 'POST' })
           ));
           results.querySelectorAll('.sk-card-assign').forEach(b => { b.textContent = '✓'; });
-          allBtn.textContent = i18n.t('sk_all_assigned');
+          allBtn.textContent = '✓ All assigned';
           refreshSkillLists();
         });
       }
 
       if (d.type === 'error') {
         es.close(); es = null;
-        btn.textContent = `✦ ${i18n.t('sk_suggest')}`;
+        btn.textContent = '✦ Suggest Skills';
         log.innerHTML += `<div class="sk-log-row sk-log-err">✗ ${esc(d.message)}</div>`;
       }
     };
 
     es.onerror = () => {
       es.close(); es = null;
-      btn.textContent = `✦ ${i18n.t('sk_suggest')}`;
+      btn.textContent = '✦ Suggest Skills';
     };
   });
 }

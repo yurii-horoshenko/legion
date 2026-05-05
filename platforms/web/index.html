@@ -46,11 +46,11 @@
         <div class="proj-menu" id="proj-menu">
           <div class="proj-search">
             <span class="proj-search-icon">⌕</span>
-            <input type="text" id="proj-search-input" data-i18n-placeholder="catalog_search" />
+            <input type="text" id="proj-search-input" placeholder="Search…" />
           </div>
           <div class="proj-list" id="proj-list"></div>
           <div class="proj-add" id="proj-add-from-menu">
-            <span>＋</span> <span data-i18n="modal_title">New project</span>
+            <span>＋</span> <span>New project</span>
           </div>
         </div>
       </div>
@@ -65,7 +65,7 @@
       <button class="lang-toggle" id="lang-toggle">RU</button>
       <div class="top-badge status">
         <span class="live-dot"></span>
-        <span data-i18n="connected">connected</span>
+        <span>connected</span>
       </div>
     </div>
 
@@ -104,7 +104,7 @@
     <div id="view-dash">
       <div class="dash-headline">
         <div>
-          <div class="dash-title" data-i18n="dash_title">Dashboard</div>
+          <div class="dash-title">Dashboard</div>
           <div class="dash-meta" id="dash-meta"></div>
         </div>
       </div>
@@ -118,22 +118,22 @@
       <div class="ov-tab-body on" data-ovtab="overview">
         <div class="stats">
           <div class="stat stat-0">
-            <div class="stat-label" data-i18n="stat_agents">Agents</div>
+            <div class="stat-label">Agents</div>
             <div class="stat-num" id="s-agents">—</div>
             <div class="stat-hint" data-i18n="stat_hint_agents">in this project</div>
           </div>
           <div class="stat stat-1">
-            <div class="stat-label" data-i18n="stat_workers">Workers</div>
+            <div class="stat-label">Workers</div>
             <div class="stat-num" id="s-workers">—</div>
             <div class="stat-hint" data-i18n="stat_hint_workers">active now</div>
           </div>
           <div class="stat stat-2">
-            <div class="stat-label" data-i18n="stat_tasks">Tasks</div>
+            <div class="stat-label">Tasks</div>
             <div class="stat-num" id="s-tasks">—</div>
             <div class="stat-hint" data-i18n="stat_hint_tasks">total</div>
           </div>
           <div class="stat stat-3">
-            <div class="stat-label" data-i18n="stat_busy">Busy</div>
+            <div class="stat-label">Busy</div>
             <div class="stat-num" id="s-busy">—</div>
             <div class="stat-hint" data-i18n="stat_hint_busy">agents working</div>
           </div>
@@ -141,14 +141,14 @@
         <div class="dash-cols">
           <div class="panel">
             <div class="panel-top">
-              <span class="panel-label" data-i18n="panel_activity">Activity</span>
-              <span class="panel-link" data-i18n="panel_activity_link">See all</span>
+              <span class="panel-label">Activity</span>
+              <span class="panel-link">See all</span>
             </div>
             <div class="panel-scroll" id="act-feed"></div>
           </div>
           <div class="panel">
             <div class="panel-top">
-              <span class="panel-label" data-i18n="panel_visor">Visor Bulletins</span>
+              <span class="panel-label">Visor Bulletins</span>
               <button class="panel-link" id="btn-visor-check">Run Check</button>
             </div>
             <div class="panel-scroll" id="bull-feed"></div>
@@ -170,16 +170,16 @@
     <div id="view-catalog">
       <div class="catalog-head">
         <div>
-          <div class="dash-title" data-i18n="catalog_title">Add Agent</div>
-          <div class="dash-meta"><span data-i18n="catalog_subtitle">Choose agents to add to</span> <span id="catalog-proj-name">—</span></div>
+          <div class="dash-title">Add Agent</div>
+          <div class="dash-meta"><span>Choose agents to add to</span> <span id="catalog-proj-name">—</span></div>
         </div>
-        <button class="catalog-back-btn" id="catalog-back" data-i18n="catalog_back">← Back</button>
+        <button class="catalog-back-btn" id="catalog-back">← Back</button>
       </div>
 
       <div class="catalog-toolbar">
         <div class="catalog-search-wrap">
           <span class="catalog-search-icon">⌕</span>
-          <input class="catalog-search-input" id="catalog-search" type="text" data-i18n-placeholder="catalog_search" placeholder="Search agents…" />
+          <input class="catalog-search-input" id="catalog-search" type="text" placeholder="Search agents…" />
         </div>
         <div class="catalog-filters" id="catalog-filters"></div>
       </div>
@@ -227,7 +227,7 @@
       <div class="tab-body"    data-tab="pipeline"   id="tab-pipeline"></div>
       <div class="tab-body"    data-tab="skills"     id="tab-skills">
         <p class="tab-desc" data-i18n="tab_desc_skills">Installed skills and slash commands available to this agent.</p>
-        <div class="tab-ph"><div class="tab-ph-icon">◈</div><div class="tab-ph-text" data-i18n="ph_skills">Skills appear once connected to Legion API.</div></div>
+        <div class="tab-ph"><div class="tab-ph-icon">◈</div><div class="tab-ph-text">Skills appear once connected to Legion API.</div></div>
       </div>
       <div class="tab-body"    data-tab="channels"   id="tab-channels"></div>
       <div class="tab-body"    data-tab="cron"       id="tab-cron"></div>
@@ -409,14 +409,14 @@
 </div>
 <div class="overlay" id="modal">
   <div class="modal">
-    <div class="modal-title" data-i18n="modal_title">New Project</div>
+    <div class="modal-title">New Project</div>
     <div class="field">
-      <label class="field-label" for="m-name" data-i18n="modal_name_label">Project name</label>
-      <input class="field-input" id="m-name" type="text" data-i18n-placeholder="modal_name_placeholder" placeholder="e.g. BladeParry" />
+      <label class="field-label" for="m-name">Project name</label>
+      <input class="field-input" id="m-name" type="text" placeholder="e.g. BladeParry" />
     </div>
     <div class="field">
-      <label class="field-label" for="m-desc" data-i18n="modal_desc_label">Description</label>
-      <input class="field-input" id="m-desc" type="text" data-i18n-placeholder="modal_desc_placeholder" placeholder="Short description" />
+      <label class="field-label" for="m-desc">Description</label>
+      <input class="field-input" id="m-desc" type="text" placeholder="Short description" />
     </div>
     <div class="field">
       <label class="field-label" for="m-path">Project folder <span style="opacity:.4;font-weight:400">(optional)</span></label>
@@ -426,8 +426,8 @@
       </div>
     </div>
     <div class="modal-actions">
-      <button class="btn-cancel" id="m-cancel" data-i18n="modal_cancel">Cancel</button>
-      <button class="btn-create" id="m-create" data-i18n="modal_create">Create</button>
+      <button class="btn-cancel" id="m-cancel">Cancel</button>
+      <button class="btn-create" id="m-create">Create</button>
     </div>
   </div>
 </div>

@@ -41,7 +41,6 @@ export function renderDash() {
     feed.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-3);font-size:12px">No activity yet</div>`;
   }
   loadVisorBulletins();
-  renderTeamMap();
 }
 
 const ACTIVITY_ICONS = {

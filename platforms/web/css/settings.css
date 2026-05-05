@@ -67,7 +67,7 @@
   padding: 0 4px;
   border-bottom: 1px solid var(--border);
   gap: 2px;
-  margin-bottom: 24px;
+  margin-bottom: 0;
   flex-shrink: 0;
 }
 
@@ -92,7 +92,7 @@
 .ov-tab.on    { color: var(--text); border-bottom-color: var(--accent); }
 
 .ov-tab-body { display: none; }
-.ov-tab-body.on { display: block; }
+.ov-tab-body.on { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 12px; padding-top: 20px; }
 
 /* ── Overview tab ── */
 .overview-fields {

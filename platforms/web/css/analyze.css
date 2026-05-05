@@ -287,11 +287,13 @@
 .sk-badge-project { background: #dcfce7; color: #15803d; border-color: #86efac; }
 .sk-badge-both    { background: #fef9c3; color: #854d0e; border-color: #fde047; }
 .sk-pill-remove {
-  background: none; border: none; cursor: pointer;
-  color: var(--muted); font-size: 11px; padding: 0 2px;
-  line-height: 1;
+  background: none; border: 1px solid var(--border);
+  color: var(--text-3); border-radius: var(--r);
+  padding: 3px 10px; font-size: 11px; cursor: pointer;
+  white-space: nowrap; flex-shrink: 0; transition: background var(--t), color var(--t), border-color var(--t);
 }
-.sk-pill-remove:hover { color: var(--danger, #ef4444); }
+.sk-pill-remove:hover { background: #fee2e2; color: #ef4444; border-color: #fca5a5; }
+.sk-pill-remove:disabled { opacity: .5; cursor: default; }
 
 .sk-results-head {
   display: flex;
