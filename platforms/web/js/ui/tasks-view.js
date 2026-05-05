@@ -44,12 +44,15 @@ export async function renderProjectTasks(src) {
         (grouped[s] = grouped[s] || []).push(t);
       }
 
+      const taskMap = {};
       let html = '';
       for (const s of STATUSES) {
         const items = grouped[s];
         if (!items?.length) continue;
+        for (const t of items) taskMap[t.id] = t;
         html += `<div class="tasks-group">
-          <div class="tasks-group-header">
+          <div class="tasks-group-header tg-collapsible">
+            <span class="tasks-group-caret">▾</span>
             <span class="tasks-group-dot tasks-dot-${esc(s)}"></span>
             <span class="tasks-group-label">${STATUS_LBL[s] || s}</span>
             <span class="tasks-group-count">${items.length}</span>
@@ -68,17 +71,20 @@ export async function renderProjectTasks(src) {
       }
       body.innerHTML = html || '<div class="tasks-empty">No tasks found.</div>';
 
+      $$('.tg-collapsible', body).forEach(header => {
+        header.addEventListener('click', () => {
+          const grpBody = header.nextElementSibling;
+          const caret   = header.querySelector('.tasks-group-caret');
+          const collapsed = grpBody.style.display === 'none';
+          grpBody.style.display = collapsed ? '' : 'none';
+          caret.textContent = collapsed ? '▾' : '▸';
+        });
+      });
+
       $$('.tasks-row', body).forEach(row => {
         row.addEventListener('click', () => {
-          const aid   = row.dataset.aid;
-          const agent = (PROJECT_AGENTS[S.projectId] || []).find(a => a.id === aid);
-          if (!agent) return;
-          S.agentId = aid;
-          renderTree();
-          import('./agent-panel.js').then(({ selectAgent }) => {
-            selectAgent(aid);
-            setTimeout(() => { $('[data-tab="tasks"].a-tab')?.click(); }, 80);
-          });
+          const task = taskMap[row.dataset.id];
+          if (task) showTaskDetail(task);
         });
       });
 
@@ -126,11 +132,14 @@ export async function renderProjectTasks(src) {
           </div>
         </div>`;
 
+      const issueMap = {};
       for (const st of allStates) {
         const items = grouped[st];
         if (!items?.length) continue;
+        for (const iss of items) issueMap[iss.id] = iss;
         html += `<div class="tasks-group">
-          <div class="tasks-group-header">
+          <div class="tasks-group-header tg-collapsible">
+            <span class="tasks-group-caret">▾</span>
             <span class="tasks-group-dot" style="background:${esc(items[0].state?.color || '#888')}"></span>
             <span class="tasks-group-label">${STATE_LBL[st] || st}</span>
             <span class="tasks-group-count">${items.length}</span>
@@ -140,7 +149,7 @@ export async function renderProjectTasks(src) {
               const assigned = getIssueAgent(issue);
               const agentName = assigned ? (agents.find(a => a.id === assigned.agentId)?.name || assigned.agentName || '') : '';
               return `
-              <div class="tasks-row linear-issue">
+              <div class="tasks-row linear-issue" data-id="${esc(issue.id)}">
                 <span class="tasks-row-id">${esc(issue.identifier || '')}</span>
                 <span class="tasks-row-title">${esc(issue.title || 'Untitled')}</span>
                 ${agentName ? `<span class="tasks-row-assigned">→ ${esc(agentName)}</span>` : '<span class="tasks-row-unassigned">unassigned</span>'}
@@ -152,6 +161,24 @@ export async function renderProjectTasks(src) {
         </div>`;
       }
       body.innerHTML = html;
+
+      $$('.tg-collapsible', body).forEach(header => {
+        header.addEventListener('click', () => {
+          const grpBody = header.nextElementSibling;
+          const caret   = header.querySelector('.tasks-group-caret');
+          const collapsed = grpBody.style.display === 'none';
+          grpBody.style.display = collapsed ? '' : 'none';
+          caret.textContent = collapsed ? '▾' : '▸';
+        });
+      });
+
+      $$('.linear-issue', body).forEach(row => {
+        row.addEventListener('click', e => {
+          if (e.target.closest('button, a, select')) return;
+          const issue = issueMap[row.dataset.id];
+          if (issue) showLinearDetail(issue);
+        });
+      });
 
       $('#btn-lin-settings')?.addEventListener('click', () => {
         const panel = $('#lin-conn-panel');
@@ -171,6 +198,93 @@ export async function renderProjectTasks(src) {
   } catch (e) {
     body.innerHTML = `<div class="tasks-error">Failed to load: ${esc(e.message)}</div>`;
   }
+}
+
+// ── Task detail modal ──────────────────────────────────────────────────────
+
+function closeTaskDetail() {
+  document.getElementById('task-detail-overlay')?.remove();
+}
+
+function showTaskDetail(task) {
+  closeTaskDetail();
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay on';
+  overlay.id = 'task-detail-overlay';
+  overlay.innerHTML = `
+    <div class="modal td-modal">
+      <div class="td-head">
+        <div class="td-meta">
+          <span class="tasks-group-dot tasks-dot-${esc(task.status || 'backlog')}"></span>
+          <span class="td-status">${esc(task.status || 'backlog')}</span>
+          ${task.priority ? `<span class="tasks-row-pri tasks-pri-${esc(task.priority)}">${esc(task.priority)}</span>` : ''}
+        </div>
+        <button class="td-close" id="btn-close-td">✕</button>
+      </div>
+      <div class="td-title">${esc(task.title || 'Untitled')}</div>
+      ${task.description
+        ? `<div class="td-desc">${esc(task.description)}</div>`
+        : `<div class="td-no-desc">No description</div>`}
+      <div class="td-fields">
+        ${task.agentName ? `<div class="td-field"><span class="td-field-lbl">Agent</span><span>${esc(task.agentEmoji || '🤖')} ${esc(task.agentName)}</span></div>` : ''}
+        ${task.createdAt ? `<div class="td-field"><span class="td-field-lbl">Created</span><span>${new Date(task.createdAt).toLocaleDateString()}</span></div>` : ''}
+        ${task.swarmId  ? `<div class="td-field"><span class="td-field-lbl">Swarm</span><span>⚡ ${esc(task.swarmId)}</span></div>` : ''}
+      </div>
+      ${task.agentId ? `
+        <div class="td-footer">
+          <button class="btn-cfg-save" id="btn-td-open">Open in agent →</button>
+        </div>` : ''}
+    </div>`;
+  document.body.appendChild(overlay);
+
+  overlay.querySelector('#btn-close-td').addEventListener('click', closeTaskDetail);
+  overlay.addEventListener('click', e => { if (e.target === overlay) closeTaskDetail(); });
+  overlay.querySelector('#btn-td-open')?.addEventListener('click', () => {
+    closeTaskDetail();
+    S.agentId = task.agentId;
+    renderTree();
+    import('./agent-panel.js').then(({ selectAgent }) => {
+      selectAgent(task.agentId);
+      setTimeout(() => { $('[data-tab="tasks"].a-tab')?.click(); }, 80);
+    });
+  });
+}
+
+function showLinearDetail(issue) {
+  closeTaskDetail();
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay on';
+  overlay.id = 'task-detail-overlay';
+  overlay.innerHTML = `
+    <div class="modal td-modal">
+      <div class="td-head">
+        <div class="td-meta">
+          <span class="tasks-row-id">${esc(issue.identifier || '')}</span>
+          <span class="tasks-group-dot" style="background:${esc(issue.state?.color || '#888')}"></span>
+          <span class="td-status">${esc(issue.state?.name || '')}</span>
+          ${issue.priorityLabel ? `<span class="tasks-row-pri">${esc(issue.priorityLabel)}</span>` : ''}
+        </div>
+        <button class="td-close" id="btn-close-td">✕</button>
+      </div>
+      <div class="td-title">${esc(issue.title || 'Untitled')}</div>
+      ${issue.description
+        ? `<div class="td-desc">${esc(issue.description)}</div>`
+        : `<div class="td-no-desc">No description</div>`}
+      <div class="td-fields">
+        ${issue.team?.name ? `<div class="td-field"><span class="td-field-lbl">Team</span><span>${esc(issue.team.name)}</span></div>` : ''}
+        ${issue.assignee?.name ? `<div class="td-field"><span class="td-field-lbl">Assignee</span><span>${esc(issue.assignee.name)}</span></div>` : ''}
+        ${issue.createdAt ? `<div class="td-field"><span class="td-field-lbl">Created</span><span>${new Date(issue.createdAt).toLocaleDateString()}</span></div>` : ''}
+        ${(issue.labels?.nodes?.length) ? `<div class="td-field"><span class="td-field-lbl">Labels</span><span>${issue.labels.nodes.map(l => esc(l.name)).join(', ')}</span></div>` : ''}
+      </div>
+      ${issue.url ? `
+        <div class="td-footer">
+          <a class="btn-cfg-save" href="${esc(issue.url)}" target="_blank" rel="noopener">Open in Linear ↗</a>
+        </div>` : ''}
+    </div>`;
+  document.body.appendChild(overlay);
+
+  overlay.querySelector('#btn-close-td').addEventListener('click', closeTaskDetail);
+  overlay.addEventListener('click', e => { if (e.target === overlay) closeTaskDetail(); });
 }
 
 // ── Linear connection helpers ───────────────────────────────────────────────

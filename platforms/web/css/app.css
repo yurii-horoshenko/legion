@@ -3349,6 +3349,18 @@ html, body { height: 100%; overflow: hidden; font-family: var(--sans); font-size
   border-bottom: 1px solid var(--border);
   margin-bottom: 6px;
 }
+.tg-collapsible {
+  cursor: pointer;
+  user-select: none;
+}
+.tg-collapsible:hover .tasks-group-label { color: var(--text-1); }
+
+.tasks-group-caret {
+  font-size: 10px;
+  color: var(--text-3);
+  width: 10px;
+  flex-shrink: 0;
+}
 
 .tasks-group-dot {
   width: 8px;
@@ -3807,4 +3819,92 @@ html, body { height: 100%; overflow: hidden; font-family: var(--sans); font-size
   width: 100%;
   font-size: 12px;
   padding: 4px 8px;
+}
+
+/* ── Task detail modal ── */
+.td-modal {
+  width: min(600px, 96vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.td-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.td-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.td-status {
+  font-size: 11px;
+  color: var(--text-3);
+  text-transform: capitalize;
+}
+.td-close {
+  background: none;
+  border: none;
+  color: var(--text-3);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: var(--r);
+  line-height: 1;
+}
+.td-close:hover { background: var(--surface-2); color: var(--text); }
+.td-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  padding: 16px 20px 8px;
+  flex-shrink: 0;
+}
+.td-desc {
+  font-size: 13px;
+  color: var(--text-2);
+  padding: 0 20px 16px;
+  line-height: 1.6;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  flex: 1;
+}
+.td-no-desc {
+  font-size: 13px;
+  color: var(--text-3);
+  font-style: italic;
+  padding: 0 20px 16px;
+}
+.td-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-1);
+  flex-shrink: 0;
+}
+.td-field {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  align-items: center;
+}
+.td-field-lbl {
+  color: var(--text-3);
+  min-width: 60px;
+  flex-shrink: 0;
+}
+.td-footer {
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
 }
