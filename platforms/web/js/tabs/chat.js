@@ -21,13 +21,18 @@ export function renderChat(a) {
       </div>
     </div>`;
 
+  const introAbort = new AbortController();
+  const introTimer = setTimeout(() => introAbort.abort(), 240_000); // 4 min client-side guard
+
   fetch(`/api/projects/${S.projectId}/agents/${a.id}/chat/intro`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ lang: i18n.lang }),
+    signal: introAbort.signal,
   })
     .then(r => r.json())
     .then(d => {
+      clearTimeout(introTimer);
       const introEl = document.getElementById('chat-intro-msg');
       if (!introEl) return;
       const bub = introEl.querySelector('.msg-bub');
@@ -41,13 +46,13 @@ export function renderChat(a) {
       }
     })
     .catch(err => {
+      clearTimeout(introTimer);
       const introEl = document.getElementById('chat-intro-msg');
-      if (introEl) {
-        const bub = introEl.querySelector('.msg-bub');
-        bub.textContent = `Error: ${err.message}`;
-        bub.style.color = '#ef4444';
-        bub.style.fontStyle = 'italic';
-      }
+      if (!introEl) return;
+      const bub = introEl.querySelector('.msg-bub');
+      bub.textContent = err.name === 'AbortError' ? 'Request timed out' : `Error: ${err.message}`;
+      bub.style.color = '#ef4444';
+      bub.style.fontStyle = 'italic';
     });
 
   const input = $('#chat-in'), btn = $('#chat-send'), msgs = $('#chat-msgs');
@@ -72,12 +77,16 @@ export function renderChat(a) {
     msgs.scrollTop = msgs.scrollHeight;
     btn.disabled = true;
 
+    const sendAbort = new AbortController();
+    const sendTimer = setTimeout(() => sendAbort.abort(), 240_000);
     try {
       const r = await fetch(`/api/projects/${S.projectId}/agents/${a.id}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: text, lang: i18n.lang }),
+        signal: sendAbort.signal,
       });
+      clearTimeout(sendTimer);
       const d = await r.json();
       const el = document.getElementById(thinkingId);
       if (el) {
@@ -92,10 +101,11 @@ export function renderChat(a) {
         }
       }
     } catch (err) {
+      clearTimeout(sendTimer);
       const el = document.getElementById(thinkingId);
       if (el) {
         const bub = el.querySelector('.msg-bub');
-        bub.textContent = `Error: ${err.message}`;
+        bub.textContent = err.name === 'AbortError' ? 'Request timed out' : `Error: ${err.message}`;
         bub.style.color = '#ef4444';
         bub.style.fontStyle = 'italic';
       }
