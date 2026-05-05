@@ -18,11 +18,30 @@ export function showTasks() {
 
 export function getCurrentTaskSrc() { return _currentTaskSrc; }
 
+function showTasksNav() {
+  const bar = $('#tasks-back-bar'), src = $('#tasks-source-bar');
+  if (bar) bar.style.display = 'none';
+  if (src) src.style.display = '';
+}
+
+function showDetailNav(crumb) {
+  const bar = $('#tasks-back-bar'), src = $('#tasks-source-bar');
+  if (src) src.style.display = 'none';
+  if (bar) { bar.style.display = ''; }
+  const crumbEl = $('#tasks-back-crumb');
+  if (crumbEl) crumbEl.textContent = crumb || '';
+  $('#btn-tasks-back')?.addEventListener('click', () => {
+    showTasksNav();
+    renderProjectTasks(_currentTaskSrc);
+  }, { once: true });
+}
+
 export async function renderProjectTasks(src) {
   if (!S.projectId) return;
   _currentTaskSrc = src;
   const body = $('#tasks-body');
   if (!body) return;
+  showTasksNav();
   body.innerHTML = '<div class="tasks-loading">Loading…</div>';
 
   try {
@@ -261,14 +280,12 @@ function renderMd(text) {
 function showTaskDetail(task) {
   const body = $('#tasks-body');
   if (!body) return;
+  showDetailNav(task.title ? task.title.slice(0, 48) + (task.title.length > 48 ? '…' : '') : '');
   const statusColors = { todo: '#6366f1', 'in-progress': '#f59e0b', in_progress: '#f59e0b', done: '#22c55e', blocked: '#ef4444', backlog: '#94a3b8' };
   const dotColor = statusColors[task.status] || '#94a3b8';
   const priKey = (task.priority || '').toLowerCase().replace(/\s+/g, '-');
   body.innerHTML = `
     <div class="td-page">
-      <div class="td-page-nav">
-        <button class="td-back" id="btn-td-back">← Back</button>
-      </div>
       <div class="td-page-header">
         <div class="td-page-badges">
           <span class="td-status-badge">
@@ -293,7 +310,6 @@ function showTaskDetail(task) {
         </div>` : ''}
     </div>`;
 
-  body.querySelector('#btn-td-back').addEventListener('click', () => renderProjectTasks(_currentTaskSrc));
   body.querySelector('#btn-td-open')?.addEventListener('click', () => {
     S.agentId = task.agentId;
     renderTree();
@@ -307,6 +323,7 @@ function showTaskDetail(task) {
 function showLinearDetail(issue) {
   const body = $('#tasks-body');
   if (!body) return;
+  showDetailNav(issue.identifier || '');
   const stateColor = issue.state?.color || '#94a3b8';
   const priLabel   = (issue.priorityLabel || '').toLowerCase();
   const priKey     = priLabel.replace(/\s+/g, '-');
@@ -318,9 +335,6 @@ function showLinearDetail(issue) {
     : '';
   body.innerHTML = `
     <div class="td-page">
-      <div class="td-page-nav">
-        <button class="td-back" id="btn-td-back">← Back</button>
-      </div>
       <div class="td-page-header">
         <div class="td-page-badges">
           ${issue.identifier ? `<span class="td-page-id">${esc(issue.identifier)}</span>` : ''}
@@ -346,8 +360,6 @@ function showLinearDetail(issue) {
           <a class="btn-cfg-save" href="${esc(issue.url)}" target="_blank" rel="noopener">Open in Linear ↗</a>
         </div>` : ''}
     </div>`;
-
-  body.querySelector('#btn-td-back').addEventListener('click', () => renderProjectTasks(_currentTaskSrc));
 }
 
 // ── Linear connection helpers ───────────────────────────────────────────────
