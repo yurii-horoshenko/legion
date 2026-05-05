@@ -168,61 +168,6 @@ module.exports = function createSkillRoutes(ctx) {
       return true;
     }
 
-    // GET /api/projects/:pid/skills — list skills in project + global, with source flag
-    if (urlPath.match(/^\/api\/projects\/[^/]+\/skills$/) && method === "GET") {
-      const pid = urlPath.split("/")[3];
-      const project = io.readProjects().find(p => p.id === pid);
-      if (!project?.path) { http.json(res, 404, { error: "Project not found" }); return true; }
-
-      const globalSkillsDir  = path.join(os.homedir(), ".claude", "skills");
-      const projectSkillsDir = path.join(project.path, ".claude", "skills");
-
-      const safeIsDir = (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
-      const globalSet  = new Set(fs.existsSync(globalSkillsDir)  ? fs.readdirSync(globalSkillsDir).filter(n  => safeIsDir(path.join(globalSkillsDir,  n))) : []);
-      const projectSet = new Set(fs.existsSync(projectSkillsDir) ? fs.readdirSync(projectSkillsDir).filter(n => safeIsDir(path.join(projectSkillsDir, n))) : []);
-
-      const all = [...new Set([...globalSet, ...projectSet])].sort().map(name => ({
-        id: name,
-        global:  globalSet.has(name),
-        project: projectSet.has(name),
-      }));
-
-      http.json(res, 200, all);
-      return true;
-    }
-
-    // POST /api/projects/:pid/skills/:skillId — install skill into project
-    if (urlPath.match(/^\/api\/projects\/[^/]+\/skills\/[^/]+$/) && method === "POST") {
-      const parts = urlPath.split("/");
-      const pid = parts[3], skillId = parts[5];
-      const project = io.readProjects().find(p => p.id === pid);
-      if (!project?.path) { http.json(res, 404, { error: "Project not found" }); return true; }
-      const src = path.join(os.homedir(), ".claude", "skills", skillId);
-      if (!fs.existsSync(src)) { http.json(res, 404, { error: "Skill not found in user skills" }); return true; }
-      // Already global — no need to duplicate into project
-      http.json(res, 200, { ok: true, global: true });
-      return true;
-    }
-
-    // DELETE /api/projects/:pid/skills/:skillId — remove project-local copy only, never global
-    if (urlPath.match(/^\/api\/projects\/[^/]+\/skills\/[^/]+$/) && method === "DELETE") {
-      const parts = urlPath.split("/");
-      const pid = parts[3], skillId = parts[5];
-      const project = io.readProjects().find(p => p.id === pid);
-      if (!project?.path) { http.json(res, 404, { error: "Project not found" }); return true; }
-      const globalPath  = path.join(os.homedir(), ".claude", "skills", skillId);
-      const projectPath = path.join(project.path, ".claude", "skills", skillId);
-      if (fs.existsSync(globalPath)) {
-        // Global skill — only remove project-local copy if it exists, leave global intact
-        if (fs.existsSync(projectPath)) fs.rmSync(projectPath, { recursive: true, force: true });
-        http.json(res, 200, { ok: true, global: true, note: "Global skill untouched" });
-        return true;
-      }
-      if (fs.existsSync(projectPath)) fs.rmSync(projectPath, { recursive: true, force: true });
-      http.json(res, 200, { ok: true });
-      return true;
-    }
-
     return false;
   };
 };
