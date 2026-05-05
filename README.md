@@ -6,7 +6,7 @@
 <p align="center"><em>Local AI Agent Platform</em></p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/node-%3E%3D18-3c873a?style=flat-square&logo=node.js&logoColor=white"/>
+  <img src="https://img.shields.io/badge/node-%3E%3D23-3c873a?style=flat-square&logo=node.js&logoColor=white"/>
   <img src="https://img.shields.io/badge/dependencies-zero-0ea5e9?style=flat-square"/>
   <img src="https://img.shields.io/badge/agents-174%2B-8b5cf6?style=flat-square"/>
   <img src="https://img.shields.io/badge/providers-6-f59e0b?style=flat-square"/>
@@ -17,7 +17,7 @@
 <br/>
 
 **Legion** is a local platform for building and managing AI agent teams.  
-One command starts a web UI where you assemble agents, define pipelines, manage tasks and memories — all stored as plain files on disk, all running on your machine.
+One command starts a web UI where you assemble agents, define pipelines, manage tasks and memories — all backed by SQLite, all running on your machine.
 
 ---
 
@@ -136,18 +136,14 @@ Every agent in a project gets its own directory:
             ├── IDENTITY.md    ← persona and character
             ├── SOUL.md        ← values and principles
             ├── USER.md        ← project and user context
-            ├── MEMORY.md      ← long-term memories (synced bidirectionally with the UI)
-            ├── tasks.json     ← kanban tasks
-            ├── cron.json      ← scheduled jobs
-            ├── workers.json   ← background workers
-            └── channels.json  ← HTTP, Telegram, Discord, MCP endpoints
+            └── MEMORY.md      ← long-term memories (synced bidirectionally with the UI)
 ```
 
 `AGENTS.md` and `MEMORY.md` are plain markdown — Claude Code, Cursor, and any AI coding tool reads them directly. Legion is the management layer.
 
 ---
 
-## Agent detail — 10 tabs
+## Agent detail — 9 tabs
 
 | Tab | What it does |
 |-----|-------------|
@@ -157,8 +153,7 @@ Every agent in a project gets its own directory:
 | **Memories** | Persistent / Temporary / Todo memory, synced to `MEMORY.md` on disk |
 | **Tasks** | Kanban board — Backlog → In Progress → Ready → Done |
 | **Skills** | Assign skills, AI-powered suggestions, `~/.claude/skills` browser |
-| **Tools** | Tool configuration *(runtime integration in progress)* |
-| **Channels** | HTTP · Telegram · Discord · Webhook · MCP |
+| **Channels** | HTTP · Webhook · MCP |
 | **Cron** | Scheduled jobs with cron expressions |
 | **Config** | Model selection, Claude Code activation, markdown file editors |
 
@@ -190,7 +185,9 @@ legion/
 ├── lib/
 │   ├── catalog.js         ← Markdown catalog builder
 │   ├── http.js            ← postJson, getJson, json(), readBody()
-│   ├── io.js              ← all JSON read/write helpers (projects, agents, models…)
+│   ├── db.js              ← SQLite layer (projects, agents, stores, events — node:sqlite)
+│   ├── io.js              ← thin facade over db; API keys managed as gitignored files
+│   ├── ws.js              ← zero-dep WebSocket server (RFC 6455 handshake via crypto)
 │   ├── agents-fs.js       ← agent file system operations
 │   ├── ai.js              ← AI provider abstraction (all 6 providers)
 │   └── visor.js           ← Visor bulletin checks
@@ -206,10 +203,7 @@ legion/
 ├── core/
 │   ├── agents/catalog/    ← 174+ agent .md files with YAML frontmatter
 │   ├── config/
-│   │   ├── projects.json
-│   │   ├── agents/        ← one {pid}.json per project (auto-cleaned on delete)
-│   │   ├── providers.json
-│   │   ├── models.json
+│   │   ├── legion.db      ← SQLite database (all structured data, gitignored)
 │   │   ├── .pkeys.json    ← provider API keys (gitignored)
 │   │   └── .keys.json     ← model API keys (gitignored)
 │   └── prompts/           ← AI analysis prompts — edit to change recommendation logic
@@ -251,8 +245,8 @@ Keys are stored in `core/config/.pkeys.json` and `core/config/.keys.json` — bo
 | Ollama proxy for Claude Code (`/api/proxy/v1/messages`) | ✅ Done |
 | Modular server architecture (lib/ + routes/) | ✅ Done |
 | Skills tab (assign, AI suggest, `~/.claude/skills`) | ✅ Done |
-| SQLite persistence layer | 🔲 Planned |
-| Real-time WebSocket activity feed | 🔲 Planned |
+| SQLite persistence layer | ✅ Done |
+| Real-time WebSocket activity feed | ✅ Done |
 
 ---
 
