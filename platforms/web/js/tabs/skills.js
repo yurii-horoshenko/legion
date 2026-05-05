@@ -9,12 +9,34 @@ export async function renderSkills(a) {
   const el = $('#tab-skills');
   if (!el) return;
 
-  const SOURCE_LABELS = { github: 'GitHub' };
-  const SOURCE_COLORS = { github: '#374151' };
+  const SOURCE_LABELS = { skillsh: 'SKILLSH', smithery: 'SMITHERY', skillsmp: 'SKILLSMP', github: 'GitHub' };
+  const SOURCE_COLORS = { skillsh: '#ea580c', smithery: '#7c3aed', skillsmp: '#0ea5e9', github: '#475569' };
   const TYPE_ICONS    = { skill: '⚡', mcp: '🔌' };
 
   el.innerHTML = `
     ${tabDescHtml('skills')}
+
+    <div class="sk-sources-banner">
+      <div class="sk-sources-left">
+        <span class="sk-sources-label">Live catalog search</span>
+        <span class="sk-sources-hint">Suggest Skills runs real-time queries across all three registries</span>
+      </div>
+      <div class="sk-sources-chips">
+        <a class="sk-source-link" href="https://smithery.ai" target="_blank" rel="noopener"
+           style="--sc:#7c3aed">
+          🔌 <span>Smithery</span><span class="sk-chip-ext">↗</span>
+        </a>
+        <a class="sk-source-link" href="https://skills.sh" target="_blank" rel="noopener"
+           style="--sc:#ea580c">
+          ⚡ <span>Skills.sh</span><span class="sk-chip-ext">↗</span>
+        </a>
+        <a class="sk-source-link" href="https://skillsmp.com" target="_blank" rel="noopener"
+           style="--sc:#0ea5e9">
+          🎯 <span>SkillsMP</span><span class="sk-chip-ext">↗</span>
+        </a>
+      </div>
+    </div>
+
     <div class="sk-section-header" id="sk-head-installed">
       <span class="sk-section-caret">▾</span>
       <span>Assigned to this agent</span>

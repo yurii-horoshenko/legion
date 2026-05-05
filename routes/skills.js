@@ -4,6 +4,119 @@ const fs   = require("fs");
 const path = require("path");
 const os   = require("os");
 
+// ── Catalog search helpers ─────────────────────────────────────────────────
+
+function normalizeResult(name, source, desc, url, install, stars) {
+  return { name: (name || "").trim(), source, description: (desc || "").slice(0, 200), url: url || "", install: install || null, stars: stars || 0 };
+}
+
+async function searchSmithery(http, query) {
+  try {
+    const url = `https://registry.smithery.ai/servers?q=${encodeURIComponent(query)}&pageSize=12`;
+    const data = await http.getJson(url, { Accept: "application/json" });
+    return (data.servers || []).map(s => normalizeResult(
+      s.displayName || s.qualifiedName,
+      "smithery",
+      s.description,
+      `https://smithery.ai/server/${s.qualifiedName}`,
+      `npx @smithery/cli install ${s.qualifiedName}`,
+      s.useCount
+    ));
+  } catch (e) {
+    console.error("[skills:smithery]", e.message);
+    return [];
+  }
+}
+
+async function searchSkillsSh(http, query) {
+  const headers = { "User-Agent": "Legion/1.0", Accept: "application/vnd.github.v3+json" };
+  const toResults = items => (items || []).map(r => normalizeResult(
+    r.name, "skillsh", r.description, r.html_url, `npx skills add ${r.full_name}`, r.stargazers_count
+  ));
+  try {
+    // First try: topic:claude-skill tag (strict, high quality)
+    const strict = await http.getJson(
+      `https://api.github.com/search/repositories?q=topic:claude-skill+${encodeURIComponent(query)}&per_page=10&sort=stars`,
+      headers
+    );
+    if ((strict.items || []).length > 0) return toResults(strict.items);
+
+    // Fallback: broader search for SKILL.md files in claude-skill repos
+    const broad = await http.getJson(
+      `https://api.github.com/search/repositories?q=claude-skill+${encodeURIComponent(query)}+filename:SKILL.md&per_page=8&sort=stars`,
+      headers
+    );
+    return toResults(broad.items);
+  } catch (e) {
+    console.error("[skills:skillsh]", e.message);
+    return [];
+  }
+}
+
+async function searchSkillsMP(http, query) {
+  try {
+    const url = `https://skillsmp.com/api/v1/skills/search?q=${encodeURIComponent(query)}&limit=10`;
+    const data = await http.getJson(url, { Accept: "application/json" });
+    // Response: { success, data: { skills: [...] } }
+    const items = (data.data && data.data.skills) || data.skills || [];
+    return items.map(s => {
+      // Derive install command from githubUrl if available
+      // githubUrl format: https://github.com/owner/repo/tree/main/skills/skill-name
+      let install = null;
+      if (s.githubUrl) {
+        const m = s.githubUrl.match(/github\.com\/([^/]+)\/([^/]+)(?:\/tree\/[^/]+\/skills\/(.+))?/);
+        if (m) install = m[3] ? `npx skills add ${m[1]}/${m[2]}@${m[3]}` : `npx skills add ${m[1]}/${m[2]}`;
+      }
+      return normalizeResult(
+        s.name || s.title,
+        "skillsmp",
+        s.description || s.summary,
+        s.skillUrl || s.githubUrl || `https://skillsmp.com/skills/${s.id || ""}`,
+        install,
+        s.stars || 0
+      );
+    });
+  } catch (e) {
+    console.error("[skills:skillsmp]", e.message);
+    return [];
+  }
+}
+
+// Deduplicate by lowercased name, keep highest-starred duplicate
+function dedup(items) {
+  const seen = new Map();
+  for (const it of items) {
+    const key = it.name.toLowerCase();
+    if (!seen.has(key) || (it.stars > (seen.get(key).stars || 0))) seen.set(key, it);
+  }
+  return [...seen.values()];
+}
+
+// Extract 1–2 meaningful search terms from agent profile
+function buildQuery(agent) {
+  const parts = [];
+  const group = (agent.group || "").replace(/^custom$/i, "").trim();
+  if (group) parts.push(group.toLowerCase());
+
+  const techRx = /\b(kotlin|swift|typescript|javascript|python|rust|golang|java|react|vue|angular|node\.?js|docker|kubernetes|aws|gcp|azure|postgresql|mongodb|redis|graphql|openapi|llm|ml|devops|security|testing|documentation|architecture|design|mobile|ios|android)\b/i;
+  const techHit = (agent.role || "").match(techRx) || (agent.capabilities || []).join(" ").match(techRx);
+  if (techHit) parts.push(techHit[0].toLowerCase());
+
+  if (!parts.length) parts.push(((agent.name || agent.role || "developer").split(/\s+/)[0]).toLowerCase());
+  return parts.join(" ");
+}
+
+// Format catalog results for the AI prompt (compact, token-efficient)
+function formatForPrompt(label, items) {
+  if (!items.length) return `### ${label}\n(no results)\n`;
+  const lines = items.slice(0, 12).map((it, i) =>
+    `${i + 1}. [${it.source}] ${it.name} — ${it.description || "no description"}` +
+    (it.install ? `\n   install: ${it.install}` : "") +
+    (it.url ? `\n   url: ${it.url}` : "")
+  );
+  return `### ${label}\n${lines.join("\n")}\n`;
+}
+
 module.exports = function createSkillRoutes(ctx) {
   const { io, http, ai, agentFs } = ctx;
 
@@ -32,11 +145,15 @@ module.exports = function createSkillRoutes(ctx) {
         const agent = (agentsMap[pid] || []).find(a => a.id === aid);
         if (!agent) return fail("Agent not found");
 
-        // Read installed skills from SKILLS.md
+        // Read installed skills from SKILLS.md and agent identity from IDENTITY.md
         let installedSkills = "";
+        let agentIdentity = "";
         if (project.path) {
-          const skillsFile = path.join(project.path, ".legion", "agents", aid, "SKILLS.md");
+          const agentDir = path.join(project.path, ".legion", "agents", aid);
+          const skillsFile = path.join(agentDir, "SKILLS.md");
+          const identityFile = path.join(agentDir, "IDENTITY.md");
           if (fs.existsSync(skillsFile)) installedSkills = fs.readFileSync(skillsFile, "utf8").slice(0, 1500);
+          if (fs.existsSync(identityFile)) agentIdentity = fs.readFileSync(identityFile, "utf8").slice(0, 2000);
         }
 
         // Build project context from docs
@@ -53,6 +170,25 @@ module.exports = function createSkillRoutes(ctx) {
 
         progress("Reading agent profile…");
 
+        // ── Live catalog search ─────────────────────────────────────────────
+        const query = buildQuery(agent);
+        progress(`Searching catalogs for "${query}"…`);
+
+        const [smitheryResults, skillsShResults, skillsMpResults] = await Promise.all([
+          searchSmithery(http, query),
+          searchSkillsSh(http, query),
+          searchSkillsMP(http, query),
+        ]);
+
+        const totalFound = smitheryResults.length + skillsShResults.length + skillsMpResults.length;
+        progress(`Found ${totalFound} catalog items — asking AI to rank…`);
+
+        const catalogSection = totalFound > 0
+          ? formatForPrompt("Smithery (MCP servers)", smitheryResults) +
+            formatForPrompt("Skills.sh via GitHub", skillsShResults) +
+            formatForPrompt("SkillsMP", skillsMpResults)
+          : "(all catalog searches returned no results — generate recommendations from knowledge)";
+
         const promptFile = path.resolve(ctx.webRoot, "../../core/prompts/skill-suggest.md");
         let prompt = fs.readFileSync(promptFile, "utf8")
           .replace("{{agent_name}}", agent.name || aid)
@@ -60,16 +196,27 @@ module.exports = function createSkillRoutes(ctx) {
           .replace("{{agent_group}}", agent.group || "custom")
           .replace("{{capabilities}}", (agent.capabilities || []).join(", ") || "—")
           .replace("{{project_context}}", projectContext.slice(0, 2000) || "No project context available")
-          .replace("{{installed_skills}}", installedSkills || "None");
+          .replace("{{agent_identity}}", agentIdentity || "Not available")
+          .replace("{{installed_skills}}", installedSkills || "None")
+          .replace("{{catalog_results}}", catalogSection);
 
-        progress("Asking AI for skill recommendations…");
+        progress("Asking AI to select best matches…");
 
         const raw = await ai.callAI(model, provider, prompt);
-        const jsonMatch = raw.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) return fail("AI returned invalid response");
-        const result = JSON.parse(jsonMatch[0]);
+        const result = http.parseAIJson(raw);
 
-        progress(`Found ${result.skills?.length || 0} skill recommendations`);
+        // Attach real catalog metadata (url, install) where AI matched by name
+        const catalog = dedup([...smitheryResults, ...skillsShResults, ...skillsMpResults]);
+        (result.skills || []).forEach(sk => {
+          const match = catalog.find(c => c.name.toLowerCase() === sk.name.toLowerCase());
+          if (match) {
+            if (!sk.url     && match.url)     sk.url     = match.url;
+            if (!sk.install && match.install) sk.install = match.install;
+            if (!sk.source  && match.source)  sk.source  = match.source;
+          }
+        });
+
+        progress(`Selected ${result.skills?.length || 0} skill recommendations`);
         done(result);
       } catch (err) {
         console.error("[skills]", err.message);

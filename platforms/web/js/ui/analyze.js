@@ -210,8 +210,8 @@ export async function runAnalyze() {
                            CATALOG_AGENTS.find(c => c.name.toLowerCase() === ag.name.toLowerCase());
       const slugId = ag.id || ag.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
       const payload = catalogEntry
-        ? { ...catalogEntry, role: ag.reason, status: 'idle' }
-        : { id: slugId, name: ag.name, role: ag.reason, catalogId: ag.id || null, status: 'idle', group: 'custom' };
+        ? { ...catalogEntry, role: ag.role || ag.reason, status: 'idle' }
+        : { id: slugId, name: ag.name, role: ag.role || ag.reason, catalogId: ag.id || null, status: 'idle', group: 'custom' };
 
       const r = await fetch(`/api/projects/${S.projectId}/agents`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },

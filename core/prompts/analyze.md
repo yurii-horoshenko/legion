@@ -55,7 +55,18 @@ Apply the hiring test: "Would this project realistically hire someone in this ro
 - Typical total: 6–14 agents. More than 15 means you are padding.
 - If an agent's reason would be "could help with general quality" or similar — exclude it.
 
-### Step 4 — Suggest pipelines
+### Step 4 — Write project-specific roles
+
+For each recommended agent write a `role` field that:
+- Is 1–2 sentences, declarative present tense ("Owns...", "Designs...", "Manages...")
+- Names actual technologies from the tech stack (e.g. "Kotlin Multiplatform", "AWS GameLift", ".NET 8 API", "PostgreSQL")
+- Describes what this agent concretely does in THIS project, not in general
+- Avoids vague phrases like "handles all needs" or "responsible for quality"
+
+Good example: "Designs cross-platform API contracts between the .NET backend and Kotlin Multiplatform shared module; owns ADR authoring and enforces interface versioning across iOS, Android, and server boundaries."
+Bad example: "Handles software architecture and API design for the project."
+
+### Step 5 — Suggest pipelines
 
 Suggest pipeline connections based on actual workflow: who produces output that another agent consumes. Only suggest pipelines between agents that have a genuine dependency, not just organizational proximity.
 
@@ -71,9 +82,10 @@ Respond with ONLY a valid JSON object. No markdown, no explanation, no code fenc
     {
       "id": "exact-catalog-id",
       "name": "Agent Name",
+      "role": "1–2 sentence project-specific role using the actual tech stack — this becomes the agent's identity in this project",
       "tier": "mandatory|additional",
       "covers": "which functional area(s) this agent addresses",
-      "reason": "one specific reason tied to a named technology or stated goal in this project"
+      "reason": "one sentence: why this agent is needed right now given the current state of the project"
     }
   ],
   "pipelines": [

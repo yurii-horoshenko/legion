@@ -1,4 +1,4 @@
-You are an expert in Claude Code agent skills and tooling. Your job is to recommend relevant skills and MCP servers for a specific AI agent based on its role, capabilities, and project context.
+You are selecting the most relevant skills and MCP servers for a specific AI agent from real catalog search results.
 
 ## Agent
 
@@ -7,50 +7,62 @@ Role: {{agent_role}}
 Group: {{agent_group}}
 Capabilities: {{capabilities}}
 
+## Agent identity file (IDENTITY.md)
+
+This is the agent's actual identity document — use it to deeply understand what this agent does in this project:
+
+{{agent_identity}}
+
 ## Project context
 
 {{project_context}}
 
-## Already installed skills
+## Already installed
 
 {{installed_skills}}
 
-## Skill sources
+## Live catalog search results
 
-Skills come from two ecosystems:
+The following items were retrieved right now from Smithery, Skills.sh (GitHub), and SkillsMP.
+Prefer recommending from this list — these are real, currently available tools.
+If the list is sparse or missing something obvious, you may add well-known tools not in the list, but mark their source clearly.
 
-1. **skills.sh** — Claude Code slash-command skills. Installed via `npx skills add owner/repo@skill-name`. Browse at: https://skills.sh
-2. **GitHub** — Skills are repos with a `SKILL.md` file. Search: https://github.com/topics/claude-skill
-3. **Smithery** — MCP servers (tools the agent can call). Browse at: https://smithery.ai
+{{catalog_results}}
 
 ## Your task
 
-Recommend 5–10 skills or MCP servers that would genuinely help this specific agent do its job better.
+Select 5–10 skills or MCP servers that would genuinely help this agent do its job better.
 
-Apply a strict relevance filter — "would this agent realistically use this tool daily?"
+Rules:
+- Strict relevance filter — "would this agent use this tool daily or weekly?"
+- Prefer items already in the catalog results above (they exist and are installable now)
+- Do NOT recommend skills already listed under "Already installed"
+- For each item write one specific reason tied to this agent's exact role and project context
+- Keep install commands exactly as shown in the catalog results
 
-For each recommendation:
-- Prefer skills.sh entries when they exist for the use case
-- Suggest MCP servers from Smithery for external integrations (databases, APIs, cloud)
-- Suggest GitHub search terms for niche skills not in the main registry
-- Do NOT suggest skills already installed
+### Final verification step
+
+Before producing output, cross-check each selected skill against the agent's identity and role:
+- Does this skill match the specific technologies mentioned in IDENTITY.md or the agent's role?
+- Would this particular agent (not just any agent) realistically use this tool?
+- Remove any skill that is generic/universal but not tied to what this agent actually does
 
 ---
 
 ## Output format
 
-Respond with ONLY valid JSON. No markdown, no explanation.
+Respond with ONLY valid JSON. No markdown, no explanation outside the JSON.
 
 {
-  "summary": "1–2 sentences: what skills gap exists and why these recommendations help",
+  "summary": "1–2 sentences: what gap exists and why these tools close it",
   "skills": [
     {
-      "name": "skill or server name",
+      "name": "exact name from catalog or well-known tool name",
       "type": "skill | mcp",
-      "source": "skillsh | github | smithery",
-      "url": "direct URL to the skill/server page or search",
-      "install": "npx command or install instruction (null if unknown)",
-      "reason": "one specific reason tied to this agent's role or capabilities"
+      "source": "skillsh | smithery | skillsmp | github",
+      "url": "direct URL to the skill/server page",
+      "install": "install command exactly as in catalog, or null if unknown",
+      "reason": "one specific reason tied to this agent's role and project"
     }
   ]
 }

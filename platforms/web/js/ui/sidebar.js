@@ -25,7 +25,7 @@ export function renderTree() {
   $('#agent-tree').innerHTML = agents.map(a => `
     <div class="agent-row ${a.id === S.agentId ? 'active' : ''}" data-id="${a.id}">
       <span class="a-dot ${a.status || 'idle'}"></span>
-      <span class="a-name">${esc(a.name)}</span>
+      <span class="a-name">${a.emoji ? `${a.emoji} ` : ''}${esc(a.name)}</span>
       ${(a.workers || 0) > 0 ? `<span class="a-badge">${a.workers}w</span>` : ''}
     </div>`).join('');
 

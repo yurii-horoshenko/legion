@@ -324,7 +324,6 @@
 .ov-stats {
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
-  overflow: hidden;
   margin-bottom: 20px;
 }
 
@@ -337,11 +336,84 @@
   border-bottom: 1px solid var(--border);
   transition: background .12s;
 }
+.ov-stat-row:first-child { border-radius: var(--r-lg) var(--r-lg) 0 0; }
+.ov-stat-row:last-child  { border-radius: 0 0 var(--r-lg) var(--r-lg); }
 .ov-stat-row:hover { background: var(--bg-hover); }
 .ov-stat-last { border-bottom: none; }
 
 .ov-stat-row.ov-stat-glow { background: rgba(239,68,68,.04); }
 .ov-stat-row.ov-stat-glow:hover { background: rgba(239,68,68,.08); }
+.ov-stat-row.ov-stat-disorient-glow { background: rgba(249,115,22,.04); }
+.ov-stat-row.ov-stat-disorient-glow:hover { background: rgba(249,115,22,.08); }
+
+/* ── RPG: Level badge on avatar ── */
+.ov-level-badge {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  background: rgba(0,0,0,.72);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  padding: 2px 7px;
+  border-radius: 10px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* ── RPG: Stars ── */
+.ov-stars { display: flex; gap: 1px; font-size: 15px; margin-top: 2px; }
+.ov-star    { color: var(--border-2); line-height: 1; }
+.ov-star-on { color: #f59e0b; }
+
+/* ── RPG: Rank tag ── */
+.ov-rank-tag {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--accent-dim);
+  padding: 2px 9px;
+  border-radius: 10px;
+  margin-top: 3px;
+}
+
+/* ── RPG: XP bar ── */
+.ov-xp-wrap { width: 100%; display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
+.ov-xp-track {
+  height: 3px;
+  background: var(--bg-hover);
+  border-radius: 2px;
+  overflow: hidden;
+  width: 100%;
+}
+.ov-xp-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width .6s cubic-bezier(.4,0,.2,1);
+}
+.ov-xp-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text-3);
+  text-align: center;
+}
+
+/* ── RPG: Insight banners ── */
+.ov-insights { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.ov-insight {
+  font-size: 11px;
+  padding: 7px 11px;
+  border-radius: var(--r);
+  line-height: 1.5;
+  border-left: 3px solid transparent;
+}
+.ov-insight-warn { background: rgba(245,158,11,.08); border-left-color: #f59e0b; color: #d97706; }
+.ov-insight-good { background: rgba(16,185,129,.08);  border-left-color: #10b981; color: #059669; }
 
 .ov-stat-icon { font-size: 13px; text-align: center; }
 
