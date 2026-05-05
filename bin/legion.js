@@ -75,5 +75,5 @@ function cmdWeb(args) {
   // Auto-build catalog from .md files before serving
   require("../lib/catalog").buildCatalog(webRoot);
 
-  require("./server").startServer({ port, doOpen, webRoot });
+  require("./server")({ port, doOpen, webRoot });
 }

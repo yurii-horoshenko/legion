@@ -118,6 +118,14 @@ export async function loadProjects() {
   } catch { projects = []; }
   projects.sort((a, b) => a.name.localeCompare(b.name));
   setProjects(projects);
+  if (projects.length) {
+    const { S } = await import('./state.js');
+    S.projectId = projects[0].id;
+    await loadProjectAgents(S.projectId);
+    const { setAddedAgentIds } = await import('./state.js');
+    const { PROJECT_AGENTS: PA } = await import('./state.js');
+    setAddedAgentIds(new Set((PA[S.projectId] || []).map(a => a.id)));
+  }
   return projects;
 }
 
@@ -136,8 +144,3 @@ export async function fetchIntegrations() {
 }
 
 export function setIntegCache(val) { _integCache = val; }
-
-// ── AGENT_REGISTRY (shared mutable map) ───────────────────────────────────
-// Exported as a plain object so all modules share the same reference
-
-export const AGENT_REGISTRY = {};

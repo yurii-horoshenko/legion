@@ -1,5 +1,7 @@
 // ── Utils ──────────────────────────────────────────────────────────────────
 
+import i18n from '../i18n.js';
+
 export const $ = (s, ctx = document) => ctx.querySelector(s);
 export const $$ = (s, ctx = document) => [...ctx.querySelectorAll(s)];
 
@@ -26,8 +28,6 @@ export function relTime(iso) {
   if (h < 24) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
 }
-
-import i18n from '../i18n.js';
 
 export function tabDescHtml(tab) {
   return `<p class="tab-desc">${esc(i18n.t(`tab_desc_${tab}`))}</p>`;
