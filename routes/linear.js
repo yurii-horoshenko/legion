@@ -167,35 +167,45 @@ module.exports = function createLinearRoutes(ctx) {
           `- id:"${a.id}" | name:${a.name} | role:${a.role || "—"}`
         ).join("\n");
 
+        const issueList = issues.map((iss, i) =>
+          `${i + 1}. id:"${iss.id}" | ${iss.identifier || ""}: ${iss.title || "Untitled"} — ${(iss.description || "").slice(0, 150)}`
+        ).join("\n");
+
         const sysPrompt = [
-          `You are assigning a Linear issue to the most appropriate agent based on agent roles.`,
+          `You are assigning Linear issues to the most appropriate agents based on their roles.`,
           ``,
           `# Agents`,
           agentList,
           ``,
-          `Return ONLY valid JSON (no markdown):`,
-          `{ "agentId": "agent-id", "agentName": "name", "reason": "one sentence" }`,
+          `# Issues to assign (${issues.length} total)`,
+          issueList,
+          ``,
+          `Return ONLY a valid JSON array (no markdown, no explanation):`,
+          `[{"issueId":"...","agentId":"...","agentName":"...","reason":"one sentence"},...]`,
+          `Include every issue. If no agent fits well, pick the closest match.`,
         ].join("\n");
 
-        prog(`Starting — ${issues.length} issues, ${agents.length} agents`);
+        prog(`Sending ${issues.length} issues to AI in one batch…`);
 
         let assigned = 0;
-        for (let idx = 0; idx < issues.length; idx++) {
-          // aborted check removed — SSE handler tracks disconnect internally
-          const issue = issues[idx];
-          send("processing", { issueId: issue.id, index: idx, total: issues.length });
+        try {
+          const raw     = await ai.callAIMessages(model, provider, sysPrompt, [{ role: "user", content: "Assign all issues." }]);
+          const results = http.parseAIJson(raw);
+          const list    = Array.isArray(results) ? results : (results.assignments || []);
 
-          const userMsg = `Issue ${issue.identifier || ""}: ${issue.title || "Untitled"}\n${(issue.description || "").slice(0, 200)}`;
-          try {
-            const raw    = await ai.callAIMessages(model, provider, sysPrompt, [{ role: "user", content: userMsg }]);
-            const parsed = http.parseAIJson(raw);
-            if (parsed.agentId) {
-              send("assignment", { issueId: issue.id, agentId: parsed.agentId, agentName: parsed.agentName || "", reason: parsed.reason || "" });
-              assigned++;
-            }
-          } catch (e) {
-            send("assignment-error", { issueId: issue.id, message: e.message });
+          for (const item of list) {
+            if (!item.issueId || !item.agentId) continue;
+            send("assignment", { issueId: item.issueId, agentId: item.agentId, agentName: item.agentName || "", reason: item.reason || "" });
+            assigned++;
           }
+
+          // Flag any issues the AI skipped
+          const assignedIds = new Set(list.map(x => x.issueId));
+          for (const iss of issues) {
+            if (!assignedIds.has(iss.id)) send("assignment-error", { issueId: iss.id, message: "Not assigned by AI" });
+          }
+        } catch (e) {
+          fail("Auto-assign failed: " + e.message); return;
         }
 
         prog(`Done — ${assigned}/${issues.length} assigned`);

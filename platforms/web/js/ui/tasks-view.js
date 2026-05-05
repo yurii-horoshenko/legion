@@ -525,21 +525,8 @@ async function runAutoAssign(issues, agents, overlay) {
         try {
           const d = JSON.parse(line.slice(5).trim());
 
-          if (d.type === 'processing') {
-            // Highlight current row, remove previous highlight
-            tbody?.querySelectorAll('.assign-row').forEach(r => r.classList.remove('assign-row-active'));
-            const row = tbody?.querySelector(`.assign-row[data-issue-id="${d.issueId}"]`);
-            if (row) {
-              row.classList.add('assign-row-active');
-              row.scrollIntoView({ block: 'nearest' });
-            }
-            setStatus(`Processing ${d.index + 1} / ${d.total}…`);
-          }
-
           if (d.type === 'assignment') {
             const row = tbody?.querySelector(`.assign-row[data-issue-id="${d.issueId}"]`);
-            if (row) row.classList.remove('assign-row-active');
-
             const sel = overlay.querySelector(`select[data-issue-id="${d.issueId}"]`);
             if (sel && d.agentId) {
               sel.value = d.agentId;
@@ -558,7 +545,7 @@ async function runAutoAssign(issues, agents, overlay) {
                 }
               }
             }
-            setStatus(`Processing… ${assigned} assigned so far`);
+            setStatus(`Applying… ${assigned} assigned`);
           }
 
           if (d.type === 'assignment-error') {
