@@ -624,9 +624,9 @@ html, body { height: 100%; overflow: hidden; font-family: var(--sans); font-size
   font-size: 12px;
   color: var(--text-3);
 }
-.tm-node rect { transition: opacity .15s; }
-.tm-node:hover rect { opacity: .7; }
-.tm-node:hover { filter: brightness(1.1); }
+.tm-node rect { transition: filter .15s, stroke-width .15s; }
+.tm-node:hover rect { filter: brightness(1.25) drop-shadow(0 0 6px currentColor); }
+.tm-node:hover { cursor: pointer; }
 
 /* Panel */
 .panel {
