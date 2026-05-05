@@ -11,7 +11,7 @@ Description: {{project_description}}
 
 ## Currently active agents in Legion
 
-IMPORTANT: The list below is the ONLY source of truth for what is currently active in this project. Agents mentioned anywhere in the project documentation (docs/AGENTS.md, aifactory/, .claude/agents/, or any agent list in markdown files) are NOT active — they may be planned, historical, or installed in a different system. Do not treat them as coverage.
+IMPORTANT: The list below is the ONLY source of truth for what is currently active in this project. Agents mentioned anywhere in the project documentation (docs/AGENTS.md, .claude/agents/, or any agent list in markdown files) are NOT active — they may be planned, historical, or installed in a different system. Do not treat them as coverage.
 
 {{existing_agents}}
 

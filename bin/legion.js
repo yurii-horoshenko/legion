@@ -5,6 +5,7 @@ const https  = require("https");
 const fs     = require("fs");
 const path   = require("path");
 const crypto = require("crypto");
+const os     = require("os");
 const { exec } = require("child_process");
 
 // ── Catalog builder ────────────────────────────────────────────────────────
@@ -194,6 +195,9 @@ function cmdWeb(args) {
   // Auto-build catalog from .md files before serving
   buildCatalog(webRoot);
 
+  // core/agents/ base — prompt_file values are "catalog/group/file.md" relative to this
+  const agentsBaseDir = path.resolve(webRoot, "../../core/agents");
+
   // ── Config store (core/config/) ──────────────────────────────────────────
   const configDir       = path.resolve(webRoot, "../../core/config");
   const modelsFile      = path.join(configDir, "models.json");
@@ -238,6 +242,26 @@ function cmdWeb(args) {
     fs.mkdirSync(agentDir, { recursive: true });
     fs.writeFileSync(path.join(agentDir, "agent.md"), agentMd(agent));
 
+    // Write Claude Code native sub-agent to .claude/agents/{id}.md
+    try {
+      const promptFile = agent.prompt_file
+        ? path.join(agentsBaseDir, agent.prompt_file)
+        : null;
+      const claudeAgentsDir = path.join(project.path, ".claude", "agents");
+      fs.mkdirSync(claudeAgentsDir, { recursive: true });
+      const claudeAgentPath = path.join(claudeAgentsDir, agent.id + ".md");
+      if (promptFile && fs.existsSync(promptFile)) {
+        fs.copyFileSync(promptFile, claudeAgentPath);
+      } else {
+        if (agent.prompt_file) console.warn(`  [agent] Catalog file not found: ${agent.prompt_file} — using stub for ${agent.id}`);
+        const name = agent.name || agent.id;
+        const desc = agent.description || agent.vibe || "";
+        fs.writeFileSync(claudeAgentPath, `---\nname: ${name}\ndescription: ${desc}\n---\n\n# ${name}\n\n${desc}\n`);
+      }
+    } catch (e) {
+      console.error(`  Warning: could not write .claude/agents/${agent.id}.md: ${e.message}`);
+    }
+
     const name = agent.name || agent.id;
     const desc = agent.description || "";
 
@@ -264,6 +288,8 @@ function cmdWeb(args) {
     if (!agentDir.startsWith(legionDir + path.sep)) return;
     try { fs.rmSync(agentDir, { recursive: true, force: true }); } catch {}
     try { fs.unlinkSync(path.join(legionDir, "agents", agentId + ".md")); } catch {}
+    // Remove Claude Code native sub-agent
+    try { fs.unlinkSync(path.join(project.path, ".claude", "agents", agentId + ".md")); } catch {}
   }
 
   function readProjects() {
@@ -276,6 +302,56 @@ function cmdWeb(args) {
     fs.writeFileSync(tmp, data);
     fs.renameSync(tmp, projectsFile);
   }
+
+  // Sync .legion/agents → .claude/agents/ for native Claude Code pickup
+  function syncClaudeAgents() {
+    const projects = readProjects();
+    let synced = 0;
+    for (const project of projects) {
+      if (!project.path) continue;
+      const legionAgentsDir = path.join(project.path, ".legion", "agents");
+      if (!fs.existsSync(legionAgentsDir)) continue;
+      const claudeAgentsDir = path.join(project.path, ".claude", "agents");
+
+      for (const agentId of fs.readdirSync(legionAgentsDir)) {
+        const stat = fs.statSync(path.join(legionAgentsDir, agentId));
+        if (!stat.isDirectory()) continue;
+        const claudeAgentPath = path.join(claudeAgentsDir, agentId + ".md");
+        if (fs.existsSync(claudeAgentPath)) continue;
+
+        const agentMdPath = path.join(legionAgentsDir, agentId, "agent.md");
+        if (!fs.existsSync(agentMdPath)) continue;
+
+        try {
+          const agentMdContent = fs.readFileSync(agentMdPath, "utf8");
+          const catalogMatch = agentMdContent.match(/^catalog:\s*(.+)/m);
+          const promptFile = catalogMatch ? catalogMatch[1].trim() : null;
+          const promptPath = promptFile ? path.join(agentsBaseDir, promptFile) : null;
+
+          fs.mkdirSync(claudeAgentsDir, { recursive: true });
+
+          if (promptPath && fs.existsSync(promptPath)) {
+            fs.copyFileSync(promptPath, claudeAgentPath);
+            synced++;
+          } else {
+            if (promptFile) console.warn(`  [sync] Catalog file not found: ${promptFile} — using stub for ${agentId}`);
+            const nameMatch  = agentMdContent.match(/^name:\s*(.+)/m);
+            const groupMatch = agentMdContent.match(/^group:\s*(.+)/m);
+            const name  = nameMatch  ? nameMatch[1].trim() : agentId;
+            const group = groupMatch ? groupMatch[1].trim() : "";
+            fs.writeFileSync(claudeAgentPath,
+              `---\nname: ${name}\ndescription: ${group ? group + " agent" : name}\n---\n\n# ${name}\n`);
+            synced++;
+          }
+        } catch (e) {
+          console.error(`  Sync warning [${agentId}]: ${e.message}`);
+        }
+      }
+    }
+    if (synced > 0) console.log(`  Synced ${synced} agent(s) → .claude/agents/`);
+  }
+
+  syncClaudeAgents();
 
   function readModels() {
     const models = fs.existsSync(modelsFile)
@@ -680,9 +756,10 @@ function cmdWeb(args) {
       const project   = readProjects().find(p => p.id === projectId);
       if (!project?.path) return json(res, 404, { error: "Project has no path" });
       const agentDir  = path.join(project.path, ".legion", "agents", agentId);
+      const DEFAULT_FILES = ["AGENTS.md", "IDENTITY.md", "SOUL.md", "USER.md", "MEMORY.md", "CONTEXT.md", "SKILLS.md"];
       const files = fs.existsSync(agentDir)
         ? fs.readdirSync(agentDir).filter(f => f.endsWith(".md") && f !== "agent.md").sort()
-        : [];
+        : DEFAULT_FILES;
       return json(res, 200, { files });
     }
 
@@ -898,6 +975,163 @@ function cmdWeb(args) {
       const cfg = { ...readConfig(), ...body };
       writeConfig(cfg);
       return json(res, 200, cfg);
+    }
+
+    // POST /api/projects/:pid/agents/:aid/suggest-skills
+    if (urlPath.match(/^\/api\/projects\/[^/]+\/agents\/[^/]+\/suggest-skills$/) && method === "POST") {
+      const parts = urlPath.split("/");
+      const pid = parts[3];
+      const aid = parts[5];
+
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection":    "keep-alive",
+        "Access-Control-Allow-Origin": "*",
+      });
+      let aborted = false;
+      req.on("close", () => { aborted = true; });
+
+      const send     = (type, payload) => { if (!aborted) res.write(`data: ${JSON.stringify({ type, ...payload })}\n\n`); };
+      const progress = (msg) => { console.log("[skills]", msg); send("progress", { message: msg }); };
+      const done     = (result) => { send("done", { result }); res.end(); };
+      const fail     = (err)    => { send("error", { message: err }); res.end(); };
+
+      try {
+        const cfg = readConfig();
+        if (!cfg.defaultModelId) return fail("No default model configured in Settings → General");
+
+        const projects = readProjects();
+        const project  = projects.find(p => p.id === pid);
+        if (!project)   return fail("Project not found");
+
+        const models    = readModels();
+        const providers = readProviders();
+        const model     = models.find(m => m.id === cfg.defaultModelId);
+        if (!model) return fail("Default model not found");
+        const provider = providers.find(p => p.id === model.providerId);
+        if (!provider) return fail("Provider not found");
+
+        const agentsMap = readPAgents();
+        const agent = (agentsMap[pid] || []).find(a => a.id === aid);
+        if (!agent) return fail("Agent not found");
+
+        // Read installed skills from SKILLS.md
+        let installedSkills = "";
+        if (project.path) {
+          const skillsFile = path.join(project.path, ".legion", "agents", aid, "SKILLS.md");
+          if (fs.existsSync(skillsFile)) installedSkills = fs.readFileSync(skillsFile, "utf8").slice(0, 1500);
+        }
+
+        // Build project context from docs
+        let projectContext = project.description || "";
+        if (project.path) {
+          const docsDir = path.join(project.path, "docs");
+          if (fs.existsSync(docsDir)) {
+            const docFiles = fs.readdirSync(docsDir).filter(f => f.endsWith(".md")).slice(0, 2);
+            for (const f of docFiles) {
+              try { projectContext += "\n" + fs.readFileSync(path.join(docsDir, f), "utf8").slice(0, 800); } catch {}
+            }
+          }
+        }
+
+        progress("Reading agent profile…");
+
+        const promptFile = path.resolve(webRoot, "../../core/prompts/skill-suggest.md");
+        let prompt = fs.readFileSync(promptFile, "utf8")
+          .replace("{{agent_name}}", agent.name || aid)
+          .replace("{{agent_role}}", agent.role || agent.description || "")
+          .replace("{{agent_group}}", agent.group || "custom")
+          .replace("{{capabilities}}", (agent.capabilities || []).join(", ") || "—")
+          .replace("{{project_context}}", projectContext.slice(0, 2000) || "No project context available")
+          .replace("{{installed_skills}}", installedSkills || "None");
+
+        progress("Asking AI for skill recommendations…");
+
+        const raw = await callAI(model, provider, prompt);
+        const jsonMatch = raw.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) return fail("AI returned invalid response");
+        const result = JSON.parse(jsonMatch[0]);
+
+        progress(`Found ${result.skills?.length || 0} skill recommendations`);
+        done(result);
+      } catch (err) {
+        console.error("[skills]", err.message);
+        fail("Request error: " + err.message);
+      }
+      return;
+    }
+
+    // GET /api/skills/available — list user-level skills from ~/.claude/skills/
+    if (urlPath === "/api/skills/available" && method === "GET") {
+      const userSkillsDir = path.join(os.homedir(), ".claude", "skills");
+      const skills = [];
+      if (fs.existsSync(userSkillsDir)) {
+        for (const name of fs.readdirSync(userSkillsDir).sort()) {
+          const skillDir = path.join(userSkillsDir, name);
+          if (!fs.statSync(skillDir).isDirectory()) continue;
+          const skillMd = path.join(skillDir, "SKILL.md");
+          let description = "";
+          if (fs.existsSync(skillMd)) {
+            const content = fs.readFileSync(skillMd, "utf8").slice(0, 500);
+            const match = content.match(/^description:\s*(.+)/m);
+            if (match) description = match[1].trim().replace(/^["']|["']$/g, "");
+          }
+          skills.push({ id: name, description, global: true });
+        }
+      }
+      return json(res, 200, skills);
+    }
+
+    // GET /api/projects/:pid/skills — list skills in project + global, with source flag
+    if (urlPath.match(/^\/api\/projects\/[^/]+\/skills$/) && method === "GET") {
+      const pid = urlPath.split("/")[3];
+      const project = readProjects().find(p => p.id === pid);
+      if (!project?.path) return json(res, 404, { error: "Project not found" });
+
+      const globalSkillsDir  = path.join(os.homedir(), ".claude", "skills");
+      const projectSkillsDir = path.join(project.path, ".claude", "skills");
+
+      const globalSet  = new Set(fs.existsSync(globalSkillsDir)  ? fs.readdirSync(globalSkillsDir).filter(n  => fs.statSync(path.join(globalSkillsDir,  n)).isDirectory()) : []);
+      const projectSet = new Set(fs.existsSync(projectSkillsDir) ? fs.readdirSync(projectSkillsDir).filter(n => fs.statSync(path.join(projectSkillsDir, n)).isDirectory()) : []);
+
+      const all = [...new Set([...globalSet, ...projectSet])].sort().map(name => ({
+        id: name,
+        global:  globalSet.has(name),
+        project: projectSet.has(name),
+      }));
+
+      return json(res, 200, all);
+    }
+
+    // POST /api/projects/:pid/skills/:skillId — install skill into project
+    // If already available globally — skip copy, return { ok: true, global: true }
+    if (urlPath.match(/^\/api\/projects\/[^/]+\/skills\/[^/]+$/) && method === "POST") {
+      const parts = urlPath.split("/");
+      const pid = parts[3], skillId = parts[5];
+      const project = readProjects().find(p => p.id === pid);
+      if (!project?.path) return json(res, 404, { error: "Project not found" });
+      const src = path.join(os.homedir(), ".claude", "skills", skillId);
+      if (!fs.existsSync(src)) return json(res, 404, { error: "Skill not found in user skills" });
+      // Already global — no need to duplicate into project
+      return json(res, 200, { ok: true, global: true });
+    }
+
+    // DELETE /api/projects/:pid/skills/:skillId — remove project-local copy only, never global
+    if (urlPath.match(/^\/api\/projects\/[^/]+\/skills\/[^/]+$/) && method === "DELETE") {
+      const parts = urlPath.split("/");
+      const pid = parts[3], skillId = parts[5];
+      const project = readProjects().find(p => p.id === pid);
+      if (!project?.path) return json(res, 404, { error: "Project not found" });
+      const globalPath  = path.join(os.homedir(), ".claude", "skills", skillId);
+      const projectPath = path.join(project.path, ".claude", "skills", skillId);
+      if (fs.existsSync(globalPath)) {
+        // Global skill — only remove project-local copy if it exists, leave global intact
+        if (fs.existsSync(projectPath)) fs.rmSync(projectPath, { recursive: true, force: true });
+        return json(res, 200, { ok: true, global: true, note: "Global skill untouched" });
+      }
+      if (fs.existsSync(projectPath)) fs.rmSync(projectPath, { recursive: true, force: true });
+      return json(res, 200, { ok: true });
     }
 
     // POST /api/projects/:pid/analyze

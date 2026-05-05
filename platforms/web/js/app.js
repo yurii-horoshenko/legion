@@ -318,6 +318,7 @@ async function renderTab(tab, agent) {
   if (tab==='channels')  renderChannels(agent);
   if (tab==='cron')      renderCron(agent);
   if (tab==='chat')      renderChat(agent);
+  if (tab==='skills')    renderSkills(agent);
   if (tab==='config') {
     if (!MODELS.length || !PROVIDERS.length) await Promise.all([fetchProviders(), fetchModels()]);
     renderConfig(agent);
@@ -1258,6 +1259,170 @@ function renderChat(a) {
   input.addEventListener('keydown', e => { if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
 }
 
+async function renderSkills(a) {
+  const el = $('#tab-skills');
+  if (!el) return;
+
+  const SOURCE_LABELS = { skillsh: 'skills.sh', github: 'GitHub', smithery: 'Smithery' };
+  const SOURCE_COLORS = { skillsh: '#6366f1', github: '#374151', smithery: '#0ea5e9' };
+  const TYPE_ICONS    = { skill: '⚡', mcp: '🔌' };
+
+  el.innerHTML = `
+    ${tabDescHtml('skills')}
+    <div class="sk-section-label">${i18n.t('sk_installed_label')}</div>
+    <div id="sk-installed">${i18n.t('sk_loading')}</div>
+    <div class="sk-section-label sk-section-label-mt">${i18n.t('sk_available_label')}</div>
+    <div id="sk-available">${i18n.t('sk_loading')}</div>
+    <div class="sk-section-label sk-section-label-mt">
+      ${i18n.t('sk_suggest_label')}
+      <button class="sk-suggest-btn" id="sk-suggest">✦ ${i18n.t('sk_suggest')}</button>
+    </div>
+    <div id="sk-log" class="sk-log" style="display:none"></div>
+    <div id="sk-results"></div>`;
+
+  async function loadSkillsState() {
+    const [installedRes, availableRes] = await Promise.all([
+      fetch(`/api/projects/${S.projectId}/skills`),
+      fetch(`/api/skills/available`),
+    ]);
+    return {
+      installed: await installedRes.json(),
+      available: await availableRes.json(),
+    };
+  }
+
+  async function refreshSkillLists() {
+    const [skillsRes, availRes] = await Promise.all([
+      fetch(`/api/projects/${S.projectId}/skills`),
+      fetch(`/api/skills/available`),
+    ]);
+    const skills   = await skillsRes.json();   // [{id, global, project}]
+    const available = await availRes.json();    // [{id, description, global}]
+    const descMap  = Object.fromEntries(available.map(s => [s.id, s.description]));
+
+    const installedEl = $('#sk-installed');
+    if (!installedEl) return;
+
+    const activeSkills = skills.filter(s => s.global || s.project);
+    if (!activeSkills.length) {
+      installedEl.innerHTML = `<div class="sk-empty">${i18n.t('sk_no_installed')}</div>`;
+    } else {
+      installedEl.innerHTML = `<div class="sk-pill-list">${activeSkills.map(s => {
+        const badge = s.global && s.project
+          ? `<span class="sk-badge sk-badge-both">${i18n.t('sk_badge_both')}</span>`
+          : s.global
+            ? `<span class="sk-badge sk-badge-global">${i18n.t('sk_badge_global')}</span>`
+            : `<span class="sk-badge sk-badge-project">${i18n.t('sk_badge_project')}</span>`;
+        const removeBtn = s.project && !s.global
+          ? `<button class="sk-pill-remove" data-skill="${esc(s.id)}">✕</button>`
+          : '';
+        return `<div class="sk-pill">
+          <span class="sk-pill-name">⚡ ${esc(s.id)}</span>
+          ${badge}${removeBtn}
+        </div>`;
+      }).join('')}</div>`;
+      installedEl.querySelectorAll('.sk-pill-remove').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          btn.textContent = '…';
+          await fetch(`/api/projects/${S.projectId}/skills/${btn.dataset.skill}`, { method: 'DELETE' });
+          refreshSkillLists();
+        });
+      });
+    }
+
+    // Available section: skills NOT yet in project or global
+    const installedIds = new Set(skills.map(s => s.id));
+    const availableEl = $('#sk-available');
+    if (!availableEl) return;
+    const notInstalled = available.filter(s => !installedIds.has(s.id));
+    if (!notInstalled.length) {
+      availableEl.innerHTML = `<div class="sk-empty">${i18n.t('sk_no_available')}</div>`;
+    } else {
+      availableEl.innerHTML = `<div class="sk-avail-list">${notInstalled.map(s =>
+        `<div class="sk-avail-row">
+          <span class="sk-avail-name">⚡ ${esc(s.id)}</span>
+          ${descMap[s.id] ? `<span class="sk-avail-desc">${esc(descMap[s.id])}</span>` : ''}
+          <button class="sk-avail-add" data-skill="${esc(s.id)}">${i18n.t('sk_add')}</button>
+        </div>`).join('')}</div>`;
+      availableEl.querySelectorAll('.sk-avail-add').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          btn.textContent = '…'; btn.disabled = true;
+          await fetch(`/api/projects/${S.projectId}/skills/${btn.dataset.skill}`, { method: 'POST' });
+          refreshSkillLists();
+        });
+      });
+    }
+  }
+
+  refreshSkillLists();
+
+  let es = null;
+
+  $('#sk-suggest').addEventListener('click', () => {
+    const btn = $('#sk-suggest');
+    if (es) { es.close(); es = null; btn.textContent = `✦ ${i18n.t('sk_suggest')}`; return; }
+
+    const log = $('#sk-log');
+    const results = $('#sk-results');
+    log.style.display = 'block';
+    log.innerHTML = '';
+    results.innerHTML = '';
+    btn.textContent = i18n.t('sk_suggesting');
+
+    es = new EventSource(`/api/projects/${S.projectId}/agents/${a.id}/suggest-skills`);
+
+    es.onmessage = (e) => {
+      const d = JSON.parse(e.data);
+
+      if (d.type === 'progress') {
+        const row = document.createElement('div');
+        row.className = 'sk-log-row';
+        row.textContent = '→ ' + d.message;
+        log.appendChild(row);
+        log.scrollTop = log.scrollHeight;
+      }
+
+      if (d.type === 'done') {
+        es.close(); es = null;
+        btn.textContent = `✦ ${i18n.t('sk_suggest')}`;
+        const r = d.result;
+        if (!r?.skills?.length) { results.innerHTML = `<div class="sk-empty">${i18n.t('sk_no_results')}</div>`; return; }
+
+        results.innerHTML = `
+          ${r.summary ? `<div class="sk-summary">${esc(r.summary)}</div>` : ''}
+          <div class="sk-list">
+            ${r.skills.map(s => `
+              <div class="sk-card">
+                <div class="sk-card-head">
+                  <span class="sk-type-icon">${TYPE_ICONS[s.type] || '⚡'}</span>
+                  <span class="sk-card-name">${esc(s.name)}</span>
+                  <span class="sk-source-badge" style="background:${SOURCE_COLORS[s.source] || '#6b7280'}20;color:${SOURCE_COLORS[s.source] || '#6b7280'};border-color:${SOURCE_COLORS[s.source] || '#6b7280'}40">
+                    ${esc(SOURCE_LABELS[s.source] || s.source)}
+                  </span>
+                </div>
+                <div class="sk-card-reason">${esc(s.reason)}</div>
+                <div class="sk-card-foot">
+                  ${s.install ? `<code class="sk-install">${esc(s.install)}</code>` : ''}
+                  ${s.url ? `<a class="sk-link" href="${esc(s.url)}" target="_blank">↗ Open</a>` : ''}
+                </div>
+              </div>`).join('')}
+          </div>`;
+      }
+
+      if (d.type === 'error') {
+        es.close(); es = null;
+        btn.textContent = `✦ ${i18n.t('sk_suggest')}`;
+        log.innerHTML += `<div class="sk-log-row sk-log-err">✗ ${esc(d.message)}</div>`;
+      }
+    };
+
+    es.onerror = () => {
+      es.close(); es = null;
+      btn.textContent = `✦ ${i18n.t('sk_suggest')}`;
+    };
+  });
+}
+
 function renderConfig(a) {
   const el = $('#tab-config');
   const project = PROJECTS.find(p => p.id === S.projectId);
@@ -1377,7 +1542,7 @@ function renderConfig(a) {
     try {
       const r = await fetch(`/api/projects/${S.projectId}/agents/${a.id}/files`);
       const d = await r.json();
-      renderFileList(d.files || []);
+      renderFileList(d.files?.length ? d.files : Object.keys(DOC_DESCS));
     } catch {
       renderFileList(Object.keys(DOC_DESCS));
     }
