@@ -2,67 +2,52 @@
 
 ## Requirements
 
-- **Node.js 18+** — install via [brew](https://brew.sh): `brew install node`
-
----
-
-## Install
-
-From the project root:
-
-```bash
-npm install -g .
-```
-
-This registers the `legion` command globally. Done once.
+- **Node.js 23+** — install via [brew](https://brew.sh): `brew install node`
 
 ---
 
 ## Commands
 
 ```bash
-legion web              # Start portal on http://localhost:3000
-legion start            # Same as web
-legion web --port 8080  # Custom port
-legion web --no-open    # Don't auto-open browser
-legion help             # Show all commands
+npm start               # start server + open browser at http://localhost:3000
+npm run dev             # start server, skip auto-opening browser
 ```
 
-Or without global install:
+Or with global install:
 
 ```bash
-npm start               # legion web (opens browser)
-npm run dev             # legion web --no-open
+npm install -g .        # register `legion` CLI globally (run once)
+legion web              # same as npm start
+legion web --port 8080  # custom port
+legion web --no-open    # skip browser open
 ```
 
 ---
 
-## Uninstall
-
-```bash
-npm uninstall -g @legion-ai/legion
-```
-
----
-
-## Reinstall after code changes
-
-```bash
-npm install -g .
-```
-
----
-
-## What happens on `legion web`
+## What happens on start
 
 1. `bin/legion.js` parses CLI arguments
-2. `lib/catalog.js` builds `catalog.json` from `core/agents/catalog/*.md` files
+2. `lib/catalog.js` builds `platforms/web/data/agents-catalog.json` from `core/agents/catalog/*.md`
 3. `bin/server.js` starts a local HTTP server (Node.js stdlib, zero external deps):
-   - Instantiates factory modules: `createIO`, `createHTTP`, `createAI`, `createAgentFs`, `createVisor`
+   - Instantiates factory modules: `createDB`, `createIO`, `createHTTP`, `createAI`, `createAgentFs`, `createVisor`
    - Registers route handlers from `routes/` — each receives a shared `ctx` object
    - Serves `platforms/web/` as static files
 4. Opens `http://localhost:3000` in your default browser
-5. `Ctrl+C` to stop
+
+---
+
+## Config file locations
+
+All config is stored in `.config/` at the Legion repo root — **fully gitignored**.  
+Delete this folder to reset everything.
+
+| File | Contents |
+|------|----------|
+| `legion.db` | SQLite database — projects, agents, providers, models, tasks, memories, chat logs |
+| `.pkeys.json` | Provider API keys |
+| `.keys.json` | Model API keys |
+
+Keys never leave your machine.
 
 ---
 
@@ -71,28 +56,34 @@ npm install -g .
 ```
 bin/server.js
 │
+├── lib/db.js          SQLite layer (node:sqlite) — projects, agents, providers, models,
+│                      config_kv, stores, events, chat_logs
+│
 ├── lib/io.js          readProjects / writeProjects / readPAgents / writePAgents
 │                      readModels / writeModels / readProviders / writeProviders
-│                      readIntegrations / writeIntegrations / linearQuery
+│                      readConfig / writeConfig / readIntegrations / writeIntegrations
+│                      linearQuery(apiKey, gql, vars)
 │
-├── lib/http.js        postJson / getJson / json(res, status, body) / readBody(req)
+├── lib/http.js        postJson / getJson / json(res,status,body) / readBody(req)
+│                      resolveModel(models, providers, modelId)  ← accepts UUID or modelId string
+│                      createSSEHandler(res, req, tag)
 │
 ├── lib/ai.js          callAI / callAIMessages / streamOllamaToAnthropicSSE
 │                      fetchRemoteModels / langDirective
 │
 ├── lib/agents-fs.js   writeAgentFile / deleteAgentFile / agentMd
-│                      syncClaudeAgents / initLegionFolder / syncLegionMd
+│                      syncLegionMd / syncSkillsMd / initLegionFolder
 │
-├── lib/visor.js       runVisorCheck / getBulletins
+├── lib/log.js         info/warn/error/debug — level via LEGION_LOG env var
 │
-└── routes/            Each file: module.exports = function(ctx) { return async handle(...) }
+└── routes/            Each: module.exports = function(ctx) { return async handle(...) }
     ├── projects.js    /api/projects (CRUD + folder picker)
     ├── agents.js      /api/projects/:pid/agents (CRUD, avatar, files, stores, activate)
-    ├── chat.js        /api/.../chat, /api/.../chat/intro, /api/proxy/v1/messages
+    ├── chat.js        /api/.../chat, intro, orchestrator + Linear block execution
     ├── config.js      /api/models, /api/providers, /api/config
-    ├── analysis.js    /api/projects/:pid/analyze (SSE)
-    ├── skills.js      /api/.../skills, /api/.../suggest-skills
-    ├── linear.js      /api/projects/:pid/linear/*
+    ├── analysis.js    /api/projects/:pid/analyze (two-pass SSE + fuzzy catalog resolution)
+    ├── skills.js      /api/.../suggest-skills, assign, unassign, available
+    ├── linear.js      /api/projects/:pid/linear/* (teams, issues, states, labels, auto-assign)
     └── monitoring.js  /api/projects/:pid/visor, tasks, pipelines
 ```
 
@@ -100,50 +91,27 @@ All modules use Node.js stdlib only — no `npm install` ever needed.
 
 ---
 
-## Config file locations
+## Environment variables
 
-All config is stored in `.config/` at the Legion repo root — **fully gitignored**.  
-To reset all settings, delete this folder and restart.
-
-| File | Contents |
-|------|----------|
-| `legion.db` | SQLite database — projects, agents, providers, models, tasks, memories… |
-| `.pkeys.json` | Provider API keys |
-| `.keys.json` | Model API keys |
-
-Keys never leave your machine.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LEGION_LOG` | `info` | Log level: `debug`, `info`, `warn`, `error` |
+| `PORT` | `3000` | HTTP port (also set via `--port` flag) |
 
 ---
 
-## Future: publish to npm
+## Claude Code proxy
 
-Once ready to share publicly:
+Set in your project's `.claude/settings.json` (written automatically by **Config → Activate in Claude Code**):
 
-```bash
-npm publish --access public
+```json
+{
+  "model": "<modelId>",
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://localhost:3000/api/proxy",
+    "ANTHROPIC_API_KEY": "legion"
+  }
+}
 ```
 
-Then anyone installs with:
-
-```bash
-npm install -g @legion-ai/legion
-legion web
-```
-
-## Future: Homebrew formula
-
-After npm publish, a Homebrew formula can wrap it:
-
-```ruby
-class Legion < Formula
-  desc "Legion AI agent platform"
-  homepage "https://github.com/yourorg/legion"
-  url "https://registry.npmjs.org/@legion-ai/legion/-/legion-0.1.0.tgz"
-
-  def install
-    system "npm", "install", "-g", "--prefix", prefix, "."
-  end
-end
-```
-
-Then: `brew install legion-ai/tap/legion`
+This routes Claude Code's API calls through Legion's provider abstraction, enabling Ollama, OpenAI, and other providers to work transparently with Claude Code.

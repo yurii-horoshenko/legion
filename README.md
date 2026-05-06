@@ -64,7 +64,8 @@ npm run dev    # skip auto-opening the browser
 | **Pipeline** | A trigger chain — which agent fires after another, and under what condition |
 | **Catalog** | 174+ ready-to-use agent definitions across 14 domains |
 | **Provider** | An AI backend — Anthropic, OpenAI, Google, Mistral, Ollama, or Claude CLI |
-| **Analyze** | AI-powered scan of your project that recommends which agents to add |
+| **Analyze** | AI-powered scan of your project that recommends which agents and skills to add |
+| **Linear** | Per-project Linear integration — agents can create and update issues mid-chat |
 
 ---
 
@@ -91,14 +92,16 @@ Point Legion at any project. It reads your docs, scans your existing agents, and
 ✦ Analyzing…
   Validating configuration…
   Scanning project documentation… 4 files found
+  Domain detected: mobile
   Loading agent catalog… 174 agents across 14 groups
-  Sending prompt to Claude Sonnet 4.6…
-  Done — 13 agents recommended, 9 pipelines suggested
+  Pass 1 — Extracting functional requirements…
+  Pass 2 — Matching agents to requirements…
+  Done — 11 agents recommended, 7 pipelines suggested
 ```
 
-Recommendations arrive as a live stream — with a **Stop** button if you want to cancel mid-run.
+Recommendations stream live with a **Stop** button. Suggested agent IDs are resolved against the real catalog — if the AI drifts from exact catalog IDs the closest match is substituted automatically.
 
-Mandatory agents adapt to context. A game project gets PM + Architect + QA. A personal assistant project gets only what its domain actually needs.
+After analysis (or any time agents exist in the project), a **✦ Match Skills to Agents** button appears. It runs `suggest-skills` for every agent in the team and surfaces per-agent skill recommendations from Smithery, Skills.sh, and SkillsMP in one view — with **⚡ Apply All Skills** to assign everything at once.
 
 ---
 
@@ -123,6 +126,36 @@ Each connection carries a condition (`always` / `on_success` / `on_failure`) and
 
 ---
 
+## Orchestrator agents
+
+An agent with sub-agents in its pipeline becomes an **orchestrator**. When a user sends a message:
+
+1. The orchestrator decides whether to answer directly or delegate via a `<DELEGATE>` JSON block.
+2. Delegated tasks run against sub-agents in parallel.
+3. The orchestrator synthesizes the results — and, if Linear is enabled, decides which tasks to create or update.
+
+When `linearEnabled: true`, the orchestrator's synthesis prompt includes the full issue list and the `%%LINEAR_CREATE%%` / `%%LINEAR_UPDATES%%` block format. After synthesis Legion parses and executes those blocks automatically.
+
+---
+
+## Linear integration
+
+Each project can connect to a Linear workspace via Settings → Integrations. Once configured, any `linearEnabled` agent can manage issues mid-chat using structured blocks at the end of its reply:
+
+```
+%%LINEAR_CREATE%%
+[{"title":"Task title","description":"Markdown description","priority":"high","labelNames":["backend"]}]
+%%END_LINEAR_CREATE%%
+
+%%LINEAR_UPDATES%%
+[{"issueId":"VIS-33","stateName":"In Progress","description":"Updated plan"}]
+%%END_LINEAR_UPDATES%%
+```
+
+Issue identifiers (e.g. `VIS-33`) are resolved to internal UUIDs automatically before mutation.
+
+---
+
 ## What each agent stores
 
 Every agent in a project gets its own directory:
@@ -136,14 +169,16 @@ Every agent in a project gets its own directory:
             ├── IDENTITY.md    ← persona and character
             ├── SOUL.md        ← values and principles
             ├── USER.md        ← project and user context
-            └── MEMORY.md      ← long-term memories (synced bidirectionally with the UI)
+            ├── MEMORY.md      ← long-term memories (synced bidirectionally with the UI)
+            ├── SKILLS.md      ← assigned skills list
+            └── tasks.json     ← kanban tasks
 ```
 
 `AGENTS.md` and `MEMORY.md` are plain markdown — Claude Code, Cursor, and any AI coding tool reads them directly. Legion is the management layer.
 
 ---
 
-## Agent detail — 9 tabs
+## Agent detail — 10 tabs
 
 | Tab | What it does |
 |-----|-------------|
@@ -152,7 +187,8 @@ Every agent in a project gets its own directory:
 | **Workers** | Persistent background processes with live status indicators |
 | **Memories** | Persistent / Temporary / Todo memory, synced to `MEMORY.md` on disk |
 | **Tasks** | Kanban board — Backlog → In Progress → Ready → Done |
-| **Skills** | Assign skills, AI-powered suggestions, `~/.claude/skills` browser |
+| **Pipeline** | Visual trigger chain editor — add connections to other agents |
+| **Skills** | Assign skills, AI-powered suggestions from Smithery / Skills.sh / SkillsMP |
 | **Channels** | HTTP · Webhook · MCP |
 | **Cron** | Scheduled jobs with cron expressions |
 | **Config** | Model selection, Claude Code activation, markdown file editors |
@@ -160,8 +196,6 @@ Every agent in a project gets its own directory:
 ---
 
 ## 174+ agents across 14 domains
-
-Legion ships with the full [agency-agents](https://github.com/msitarzewski/agency-agents) catalog:
 
 | Domain | Example agents |
 |--------|---------------|
@@ -183,50 +217,44 @@ legion/
 │   ├── legion.js          ← CLI entry point — argument parsing only
 │   └── server.js          ← HTTP server setup, route registration, static serving
 ├── lib/
-│   ├── catalog.js         ← Markdown catalog builder
-│   ├── http.js            ← postJson, getJson, json(), readBody()
-│   ├── db.js              ← SQLite layer (projects, agents, stores, events — node:sqlite)
-│   ├── io.js              ← thin facade over db; API keys managed as gitignored files
-│   ├── ws.js              ← zero-dep WebSocket server (RFC 6455 handshake via crypto)
-│   ├── agents-fs.js       ← agent file system operations
-│   ├── ai.js              ← AI provider abstraction (all 6 providers)
-│   └── visor.js           ← Visor bulletin checks
+│   ├── catalog.js         ← Markdown catalog builder (runs at startup)
+│   ├── http.js            ← postJson, getJson, json(), readBody(), resolveModel()
+│   ├── db.js              ← SQLite layer (node:sqlite — projects, agents, stores, events)
+│   ├── io.js              ← thin facade over db; API keys stored in gitignored files
+│   ├── ws.js              ← zero-dep WebSocket server (RFC 6455 via node:crypto)
+│   ├── agents-fs.js       ← read/write agent markdown files on disk
+│   ├── ai.js              ← provider abstraction for all 6 providers + SSE streaming
+│   └── log.js             ← structured logger; level set via LEGION_LOG env var
 ├── routes/
 │   ├── projects.js        ← /api/projects
-│   ├── agents.js          ← /api/projects/:pid/agents
-│   ├── chat.js            ← /api/.../chat, /api/.../chat/intro, /api/proxy/v1/messages
-│   ├── skills.js          ← /api/.../skills, suggest-skills
+│   ├── agents.js          ← /api/projects/:pid/agents — CRUD, avatar, stores, activate
+│   ├── chat.js            ← chat, intro, orchestrator, Linear block execution
+│   ├── skills.js          ← suggest-skills (SSE), assign/unassign
 │   ├── config.js          ← /api/models, /api/providers, /api/config
-│   ├── analysis.js        ← /api/projects/:pid/analyze (SSE)
-│   ├── linear.js          ← /api/projects/:pid/linear/*
-│   └── monitoring.js      ← /api/projects/:pid/visor, tasks, pipelines
+│   ├── analysis.js        ← /api/projects/:pid/analyze (two-pass SSE)
+│   ├── linear.js          ← /api/projects/:pid/linear/* (teams, issues, states, labels)
+│   └── monitoring.js      ← visor, tasks, pipelines
 ├── core/
-│   ├── agents/catalog/    ← 174+ agent .md files with YAML frontmatter
-├── .config/               ← all user data, fully gitignored — delete to reset
-│   ├── legion.db          ← SQLite database (projects, agents, tasks, memories…)
+│   ├── agents/catalog/    ← 174+ agent .md files (YAML frontmatter + description)
+│   └── prompts/           ← AI prompts: analyze.md, analyze-pass1.md, skill-suggest.md,
+│                             chat-orchestrator.md — edit to tune recommendation logic
+├── .config/               ← all user data — fully gitignored, delete to reset
+│   ├── legion.db          ← SQLite: projects, agents, models, providers, tasks, memories…
 │   ├── .pkeys.json        ← provider API keys
 │   └── .keys.json         ← model API keys
-│   └── prompts/           ← AI analysis prompts — edit to change recommendation logic
 └── platforms/web/
     ├── index.html
     ├── js/
     │   ├── app.js         ← bootstrap & event listeners
     │   ├── i18n.js        ← EN / RU localization
-    │   ├── modules/       ← state, utils, api
+    │   ├── modules/       ← state.js, utils.js, api.js
     │   ├── ui/            ← topbar, sidebar, dashboard, agent-panel, catalog, analyze
-    │   ├── tabs/          ← one file per agent tab (chat, tasks, memories…)
+    │   ├── tabs/          ← one file per agent tab (chat, tasks, memories, skills…)
     │   └── modals/        ← project, decompose, mini modals
-    └── css/
-        ├── base.css / layout.css / sidebar.css
-        ├── dashboard.css / agent-panel.css
-        ├── modals.css / settings.css
-        ├── analyze.css / tasks-view.css
-        └── app.css        ← kept for reference; index.html loads component files
+    └── css/               ← component CSS files loaded directly by index.html
 ```
 
 No framework. No bundler. No runtime dependencies. Node.js stdlib only.
-
-Keys are stored in `core/config/.pkeys.json` and `core/config/.keys.json` — both gitignored, never leave your machine.
 
 ---
 
@@ -237,8 +265,10 @@ Keys are stored in `core/config/.pkeys.json` and `core/config/.keys.json` — bo
 | Web portal + file-based storage | ✅ Done |
 | 174+ agent catalog | ✅ Done |
 | 6 AI providers incl. Claude CLI | ✅ Done |
-| AI-powered Analyze with SSE streaming | ✅ Done |
-| Agent pipelines | ✅ Done |
+| AI-powered Analyze with two-pass SSE | ✅ Done |
+| Analyze: domain detection + catalog fuzzy ID resolution | ✅ Done |
+| Match Skills to Agents (bulk, one screen) | ✅ Done |
+| Agent pipelines + orchestrator mode | ✅ Done |
 | Bidirectional memory sync | ✅ Done |
 | EN / RU localization | ✅ Done |
 | Real AI chat with per-agent model routing | ✅ Done |
@@ -247,6 +277,8 @@ Keys are stored in `core/config/.pkeys.json` and `core/config/.keys.json` — bo
 | Skills tab (assign, AI suggest, `~/.claude/skills`) | ✅ Done |
 | SQLite persistence layer | ✅ Done |
 | Real-time WebSocket activity feed | ✅ Done |
+| Linear integration (create / update issues mid-chat) | ✅ Done |
+| Per-agent file access for Claude Code CLI agents | ✅ Done |
 
 ---
 
