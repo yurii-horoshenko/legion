@@ -175,10 +175,14 @@ async function cmdAsk(args) {
       : await buildLinearCtx();
     const subAgentCtx = buildSubAgentCtx();
 
+    const fileAccessBlock = agent.allowedTools
+      ? `\n\n## File System Access\nYou have read-only access to project files via these tools: **Read** (read file contents), **LS** (list directory), **Glob** (find files by pattern), **Grep** (search in files). Use them to analyse the codebase when your task requires it.`
+      : "";
+
     return `You are ${agent.name}. ${agent.role || ""}
 
 **Skills:** ${skillsLine}
-${identity}${linearCtx}${subAgentCtx}`;
+${identity}${linearCtx}${subAgentCtx}${fileAccessBlock}`;
   }
 
   // ── Linear context for this agent's label ─────────────────────────────────
@@ -349,9 +353,12 @@ ${identity}${linearCtx}${subAgentCtx}`;
         if (fs.existsSync(iFile)) subIdentity = "\n\n## Identity\n\n" + fs.readFileSync(iFile, "utf8");
       }
       // Subagents receive focused tasks — no full Linear context needed
-      const subSp    = `You are ${sub.name}. ${sub.role || ""}${subIdentity}`;
+      const subFileAccess = sub.allowedTools
+        ? `\n\n## File System Access\nYou have read-only access to project files via: **Read**, **LS**, **Glob**, **Grep**. Use them to analyse code when your task requires it.`
+        : "";
+      const subSp    = `You are ${sub.name}. ${sub.role || ""}${subIdentity}${subFileAccess}`;
       const task     = d.task || d.prompt || "";
-      const subReply = await ai.callAIMessages(subModel, subProv, subSp, [{ role: "user", content: task }], { maxTokens: 2048 });
+      const subReply = await ai.callAIMessages(subModel, subProv, subSp, [{ role: "user", content: task }], { maxTokens: 2048, allowedTools: sub.allowedTools || "" });
       return { agentName: sub.name, task, reply: subReply };
     }));
 
@@ -420,7 +427,7 @@ ${identity}${linearCtx}${subAgentCtx}`;
     }, 350);
     try {
       const messages = [...history, { role: "user", content: onceMsg }];
-      let reply = await ai.callAIMessages(modelObj, provider, systemPrompt, messages);
+      let reply = await ai.callAIMessages(modelObj, provider, systemPrompt, messages, { allowedTools: agent.allowedTools || "" });
       clearInterval(spin);
       process.stdout.write(`\r${" ".repeat(60)}\r`);
       reply = await processReply(reply, onceMsg);
@@ -458,7 +465,7 @@ ${identity}${linearCtx}${subAgentCtx}`;
 
       try {
         history.push({ role: "user", content: input });
-        let reply = await ai.callAIMessages(modelObj, provider, systemPrompt, [...history]);
+        let reply = await ai.callAIMessages(modelObj, provider, systemPrompt, [...history], { allowedTools: agent.allowedTools || "" });
         clearInterval(spin);
         process.stdout.write(`\r${" ".repeat(60)}\r`);
         reply = await processReply(reply, input);

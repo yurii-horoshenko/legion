@@ -55,6 +55,20 @@ export function renderConfig(a) {
       <div class="cfg-hint">Configure Linear API key in <b>Settings → Integrations</b>.</div>
     </div>
 
+    <div class="cfg-section">
+      <div class="cfg-section-label">Capabilities</div>
+      <div class="cfg-auto-apply-row">
+        <label class="cfg-switch">
+          <input type="checkbox" id="cfg-file-access-toggle" ${a.allowedTools ? 'checked' : ''}>
+          <span class="cfg-switch-track"></span>
+        </label>
+        <div>
+          <div class="cfg-auto-apply-title">Allow reading project files</div>
+          <div class="cfg-hint" style="margin-top:3px">Gives this agent access to Read, Glob, Grep via Claude Code CLI. Enable for architects, analysts, developers.</div>
+        </div>
+      </div>
+    </div>
+
     ${hasPath ? `
     <div class="cfg-section cfg-files-section">
       <div class="cfg-section-label">Agent files</div>
@@ -104,6 +118,19 @@ export function renderConfig(a) {
       const map = (PROJECT_AGENTS[S.projectId] || []);
       const idx = map.findIndex(x => x.id === a.id);
       if (idx >= 0) { map[idx] = { ...map[idx], linearEnabled: enabled }; a = map[idx]; }
+      await fetch(`/api/projects/${S.projectId}/agents`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(a) });
+    });
+  }
+
+  // File access toggle — auto-save on change
+  const fileAccessToggle = $('#cfg-file-access-toggle');
+  if (fileAccessToggle) {
+    fileAccessToggle.addEventListener('change', async () => {
+      const allowedTools = fileAccessToggle.checked ? 'Read,LS,Glob,Grep' : '';
+      const map = (PROJECT_AGENTS[S.projectId] || []);
+      const idx = map.findIndex(x => x.id === a.id);
+      if (idx >= 0) { map[idx] = { ...map[idx], allowedTools }; a = map[idx]; }
       await fetch(`/api/projects/${S.projectId}/agents`, { method: 'POST',
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(a) });
     });

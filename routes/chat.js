@@ -26,6 +26,12 @@ module.exports = function createChatRoutes(ctx) {
     } catch { return ""; }
   }
 
+  // File access instructions — injected when agent has allowedTools configured.
+  function buildFileAccessBlock(allowedTools) {
+    if (!allowedTools) return "";
+    return `\n\n## File System Access\nYou have read-only access to project files via these tools: **Read** (read file contents), **LS** (list directory), **Glob** (find files by pattern), **Grep** (search in files). Use them to analyse the codebase when your task requires it.`;
+  }
+
   // Generic Linear update format block — injected when agent.linearEnabled is true.
   function buildLinearFormatBlock() {
     return `\n\n## Linear Update Format\nTo update Linear tasks, append this block at the END of your response:\n\n%%LINEAR_UPDATES%%\n[{"issueId":"PROJ-XX","stateName":"State","title":"Updated title","description":"What to do and why."}]\n%%END_LINEAR_UPDATES%%\n\n- \`issueId\` is required. \`stateName\`, \`title\`, \`description\` are optional — include only what you are changing.\n- Use only real issue IDs from your task list above.\n- Valid states: Backlog, Todo, In Progress, In Review, Done, Cancelled`;
@@ -208,14 +214,15 @@ module.exports = function createChatRoutes(ctx) {
         : "";
 
       // Build orchestrator system prompt
-      const identity    = loadIdentity(project, aid);
+      const identity     = loadIdentity(project, aid);
       const linearFormat = agent.linearEnabled ? buildLinearFormatBlock() : "";
 
       if (!subAgents.length) {
         // Orchestrator with no sub-agents → direct reply
-        const sp   = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(lang) || ""}${identity}${allIssues}${linearFormat}`;
+        const fileAccess = buildFileAccessBlock(agent.allowedTools);
+        const sp   = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(lang) || ""}${identity}${allIssues}${linearFormat}${fileAccess}`;
         const msgs = [...history, { role: "user", content: message }];
-        const reply = await ai.callAIMessages(modelObj, provider, sp, msgs);
+        const reply = await ai.callAIMessages(modelObj, provider, sp, msgs, { allowedTools: agent.allowedTools || "" });
         const { cleanedReply, summary } = await applyLinearUpdates(project, reply);
         const finalReply = summary ? cleanedReply + summary : cleanedReply;
         db?.appendChatHistory(pid, aid, "user",      message);
@@ -229,18 +236,19 @@ module.exports = function createChatRoutes(ctx) {
 
       const subAgentsList = subAgents.map(a => `- **${a.name}** (id: ${a.id}): ${a.role || a.description || "no role"}`).join("\n");
 
+      const fileAccess   = buildFileAccessBlock(agent.allowedTools);
       const promptFile   = path.resolve(__dirname, "../core/prompts/chat-orchestrator.md");
       const systemPrompt = fs.readFileSync(promptFile, "utf8")
         .replace("{{agent_name}}",      agent.name || aid)
         .replace("{{agent_role}}",      agent.role || agent.description || "General-purpose agent")
         .replace("{{sub_agents_list}}", subAgentsList)
         .replace("{{lang_directive}}",  ai.langDirective(lang) || "")
-        + identity + linearFormat + allIssues + historyCtx;
+        + identity + linearFormat + fileAccess + allIssues + historyCtx;
 
       sse({ type: "progress", text: "Analyzing request…" });
       log.info("chat", `orchestrator analyzing (${subAgents.length} sub-agents${allIssues ? ", Linear loaded" : ""})`);
 
-      const orchestratorReply = await ai.callAIMessages(modelObj, provider, systemPrompt, [{ role: "user", content: message }]);
+      const orchestratorReply = await ai.callAIMessages(modelObj, provider, systemPrompt, [{ role: "user", content: message }], { allowedTools: agent.allowedTools || "" });
 
       const delegateMatch = orchestratorReply.match(/<DELEGATE>([\s\S]*?)<\/DELEGATE>/);
       if (!delegateMatch) {
@@ -293,12 +301,13 @@ module.exports = function createChatRoutes(ctx) {
               return { agentName: subAgent.name, error: "No model configured" };
             }
 
-            const subIdentity = loadIdentity(project, subAgent.id);
-            const subSystem   = `You are ${subAgent.name}. ${subAgent.role || ""}${ai.langDirective(lang) || ""}${subIdentity}`;
-            const subReply    = await ai.callAIMessages(
+            const subIdentity   = loadIdentity(project, subAgent.id);
+            const subFileAccess = buildFileAccessBlock(subAgent.allowedTools);
+            const subSystem     = `You are ${subAgent.name}. ${subAgent.role || ""}${ai.langDirective(lang) || ""}${subIdentity}${subFileAccess}`;
+            const subReply      = await ai.callAIMessages(
               subResolved.model, subResolved.provider, subSystem,
               [{ role: "user", content: d.task }],
-              { maxTokens: 2048 }
+              { maxTokens: 2048, allowedTools: subAgent.allowedTools || "" }
             );
             const elapsed = Date.now() - delegateStart;
             log.info("chat", `delegate ← ${subAgent.name} (${subResolved.model.modelId || subResolved.model.id}) in ${elapsed}ms`);
@@ -490,12 +499,13 @@ module.exports = function createChatRoutes(ctx) {
       const identity     = loadIdentity(project, aid);
       const linearCtx    = await buildLinearContext(project, agent);
       const linearFormat = agent.linearEnabled ? buildLinearFormatBlock() : "";
+      const fileAccess   = buildFileAccessBlock(agent.allowedTools);
       const history      = db?.getChatHistory(pid, aid) || [];
-      const systemPrompt = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(body.lang)}${identity}${linearCtx}${linearFormat}`;
+      const systemPrompt = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(body.lang)}${identity}${linearCtx}${linearFormat}${fileAccess}`;
       const messages     = [...history, { role: "user", content: message.trim() }];
 
       try {
-        let reply = await ai.callAIMessages(modelObj, provider, systemPrompt, messages);
+        let reply = await ai.callAIMessages(modelObj, provider, systemPrompt, messages, { allowedTools: agent.allowedTools || "" });
         log.info("chat", `done agent="${agent.name}" in ${chatTimer()} history=${history.length}msgs`);
 
         const { cleanedReply, summary } = await applyLinearUpdates(project, reply);
