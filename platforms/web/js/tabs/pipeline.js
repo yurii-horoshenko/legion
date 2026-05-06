@@ -30,11 +30,17 @@ export async function renderPipeline(a) {
     return projectAgents().find(x => x.id === id)?.name || id;
   }
 
+  let recES = null;
+  let recommendations = [];
+
   function paint() {
     el.innerHTML = desc + `
       <div class="store-toolbar">
         <span class="pipe-toolbar-hint">${esc(i18n.t('pipe_event_task'))}</span>
-        <button class="btn-tab-add" id="pipe-add">${esc(i18n.t('pipe_add'))}</button>
+        <div style="display:flex;gap:8px">
+          <button class="btn-tab-secondary" id="pipe-suggest">✦ Suggest</button>
+          <button class="btn-tab-add" id="pipe-add">${esc(i18n.t('pipe_add'))}</button>
+        </div>
       </div>
       ${!triggers.length
         ? `<div class="tab-empty"><div class="tab-empty-icon">⇢</div><div class="tab-empty-text">${esc(i18n.t('ph_pipeline'))}</div></div>`
@@ -52,7 +58,8 @@ export async function renderPipeline(a) {
                 </div>
                 <button class="pipe-del" data-id="${esc(t.id)}">✕</button>
               </div>`).join('')}
-          </div>`}`;
+          </div>`}
+      <div id="pipe-rec-area"></div>`;
 
     el.querySelector('#pipe-add')?.addEventListener('click', () => openPipelineModal(a, () => renderPipeline(a)));
     el.querySelectorAll('.pipe-del').forEach(btn => btn.addEventListener('click', async () => {
@@ -60,6 +67,105 @@ export async function renderPipeline(a) {
       triggers = triggers.filter(t => t.id !== btn.dataset.id);
       paint();
     }));
+
+    el.querySelector('#pipe-suggest')?.addEventListener('click', () => {
+      const btn = el.querySelector('#pipe-suggest');
+      const area = $('#pipe-rec-area');
+      if (recES) { recES.close(); recES = null; btn.textContent = '✦ Suggest'; return; }
+
+      recommendations = [];
+      btn.textContent = '✦ Analysing…';
+      area.innerHTML = `<div class="pipe-rec-loading">Analysing team structure…</div>`;
+
+      recES = new EventSource(`/api/projects/${S.projectId}/agents/${aid}/recommend-pipeline`);
+      recES.onmessage = e => {
+        const d = JSON.parse(e.data);
+        if (d.type === 'progress') {
+          area.innerHTML = `<div class="pipe-rec-loading">${esc(d.message)}</div>`;
+        }
+        if (d.type === 'done') {
+          recES.close(); recES = null;
+          btn.textContent = '✦ Suggest';
+          recommendations = d.result?.recommendations || [];
+          renderRecs(area);
+        }
+        if (d.type === 'error') {
+          recES.close(); recES = null;
+          btn.textContent = '✦ Suggest';
+          area.innerHTML = `<div class="pipe-rec-error">⚠ ${esc(d.message)}</div>`;
+        }
+      };
+      recES.onerror = () => {
+        recES.close(); recES = null;
+        btn.textContent = '✦ Suggest';
+        area.innerHTML = `<div class="pipe-rec-error">⚠ Connection error</div>`;
+      };
+    });
+
+    if (recommendations.length) renderRecs($('#pipe-rec-area'));
+  }
+
+  function renderRecs(area) {
+    if (!recommendations.length) {
+      area.innerHTML = `<div class="pipe-rec-empty">No additional connections recommended for this agent.</div>`;
+      return;
+    }
+    area.innerHTML = `
+      <div class="pipe-rec-section">
+        <div class="pipe-rec-header">
+          <span class="pipe-rec-title">Suggested connections</span>
+          <button class="pipe-rec-apply-all" id="pipe-apply-all">Apply all</button>
+        </div>
+        <div class="pipe-rec-list">
+          ${recommendations.map((r, i) => `
+            <div class="pipe-rec-card" data-idx="${i}">
+              <label class="pipe-rec-check-wrap">
+                <input type="checkbox" class="pipe-rec-check" data-idx="${i}" checked>
+              </label>
+              <div class="pipe-rec-body">
+                <div class="pipe-rec-target">${esc(agentName(r.targetAgentId))}</div>
+                <div class="pipe-badges" style="margin:4px 0">
+                  <span class="pipe-badge pipe-badge-cond">${esc(COND_LABEL[r.condition] || r.condition)}</span>
+                  <span class="pipe-badge pipe-badge-mode">${esc(MODE_LABEL[r.mode] || r.mode)}</span>
+                </div>
+                <div class="pipe-rec-reason">${esc(r.reason)}</div>
+              </div>
+              <button class="pipe-rec-add" data-idx="${i}">+ Add</button>
+            </div>`).join('')}
+        </div>
+      </div>`;
+
+    area.querySelectorAll('.pipe-rec-add').forEach(btn => btn.addEventListener('click', async () => {
+      const rec = recommendations[+btn.dataset.idx];
+      if (!rec) return;
+      await applyRec(rec);
+      btn.closest('.pipe-rec-card').remove();
+      recommendations.splice(+btn.dataset.idx, 1);
+      if (!area.querySelectorAll('.pipe-rec-card').length) area.innerHTML = '';
+    }));
+
+    area.querySelector('#pipe-apply-all')?.addEventListener('click', async () => {
+      const checked = [...area.querySelectorAll('.pipe-rec-check:checked')].map(cb => +cb.dataset.idx);
+      if (!checked.length) return;
+      const btn = area.querySelector('#pipe-apply-all');
+      btn.textContent = 'Applying…'; btn.disabled = true;
+      for (const idx of checked) {
+        if (recommendations[idx]) await applyRec(recommendations[idx]);
+      }
+      recommendations = recommendations.filter((_, i) => !checked.includes(i));
+      triggers = await storeGet(aid, 'pipeline');
+      paint();
+    });
+  }
+
+  async function applyRec(rec) {
+    await storePost(aid, 'pipeline', {
+      targetAgentId: rec.targetAgentId,
+      condition: rec.condition,
+      mode: rec.mode,
+      event: 'task_complete',
+    });
+    triggers = await storeGet(aid, 'pipeline');
   }
 
   paint();

@@ -179,10 +179,21 @@ async function cmdAsk(args) {
       ? `\n\n## File System Access\nYou have read-only access to project files via these tools: **Read** (read file contents), **LS** (list directory), **Glob** (find files by pattern), **Grep** (search in files). Use them to analyse the codebase when your task requires it.`
       : "";
 
+    const linearFormatBlock = agent.linearEnabled
+      ? `\n\n## Linear Actions\n` +
+        `**Update existing tasks** — append at the END of your response:\n` +
+        `%%LINEAR_UPDATES%%\n[{"issueId":"PROJ-XX","stateName":"State","title":"Updated title","description":"What to do and why."}]\n%%END_LINEAR_UPDATES%%\n\n` +
+        `- \`issueId\` required. \`stateName\`, \`title\`, \`description\` optional.\n` +
+        `- Valid states: Backlog, Todo, In Progress, In Review, Done, Cancelled\n\n` +
+        `**Create new tasks** — append at the END of your response:\n` +
+        `%%LINEAR_CREATE%%\n[{"title":"Task title","description":"Markdown description","priority":"urgent|high|medium|low","labelNames":["Label Name"]}]\n%%END_LINEAR_CREATE%%\n\n` +
+        `- \`title\` required. \`priority\`: urgent, high, medium, low. Both blocks can appear together.`
+      : "";
+
     return `You are ${agent.name}. ${agent.role || ""}
 
 **Skills:** ${skillsLine}
-${identity}${linearCtx}${subAgentCtx}${fileAccessBlock}`;
+${identity}${linearCtx}${subAgentCtx}${fileAccessBlock}${linearFormatBlock}`;
   }
 
   // ── Linear context for this agent's label ─────────────────────────────────
@@ -318,6 +329,62 @@ ${identity}${linearCtx}${subAgentCtx}${fileAccessBlock}`;
     return cleaned + `\n\n**Linear updates applied:**\n${results.join("\n")}`;
   }
 
+  async function applyLinearCreates(reply) {
+    const match = reply.match(/%%LINEAR_CREATE%%([\s\S]*?)%%END_LINEAR_CREATE%%/);
+    if (!match) return reply;
+
+    const cleaned = reply.replace(/%%LINEAR_CREATE%%[\s\S]*?%%END_LINEAR_CREATE%%/g, "").trim();
+    if (!project?.path) return cleaned + "\n\n⚠️ No project path — Linear creates skipped.";
+
+    const integ  = io.readIntegrations(project);
+    const apiKey = integ.linear?.apiKey;
+    if (!apiKey) return cleaned + "\n\n⚠️ Linear not configured — creates skipped.";
+
+    let creates;
+    try { creates = JSON.parse(match[1].trim()); } catch {
+      return cleaned + "\n\n⚠️ Could not parse LINEAR_CREATE block — invalid JSON.";
+    }
+    if (!Array.isArray(creates) || !creates.length) return cleaned;
+
+    const teamId = integ.linear?.defaultTeamId;
+    if (!teamId) return cleaned + "\n\n⚠️ Linear defaultTeamId not set — creates skipped.";
+
+    let labelMap = {};
+    try {
+      const lq = `{ team(id:"${teamId}") { labels { nodes { id name } } } }`;
+      const lr = await io.linearQuery(apiKey, lq);
+      const labels = lr.data?.team?.labels?.nodes || [];
+      labelMap = Object.fromEntries(labels.map(l => [l.name.toLowerCase(), l.id]));
+    } catch { /* ignore */ }
+
+    const PRIORITY_MAP = { urgent: 1, high: 2, medium: 3, low: 4 };
+    const results = [];
+
+    for (const c of creates) {
+      if (!c.title) { results.push("⚠ skipped: missing title"); continue; }
+      const input = { title: c.title, teamId };
+      if (c.description) input.description = c.description;
+      if (c.priority)    input.priority = PRIORITY_MAP[c.priority.toLowerCase()] ?? 3;
+      if (c.labelNames?.length) {
+        const ids = c.labelNames.map(n => labelMap[n.toLowerCase()]).filter(Boolean);
+        if (ids.length) input.labelIds = ids;
+      }
+      try {
+        const q = `mutation($input:IssueCreateInput!){issueCreate(input:$input){success issue{identifier title}}}`;
+        const r = await io.linearQuery(apiKey, q, { input });
+        if (r.errors || !r.data?.issueCreate?.success) {
+          results.push(`❌ "${c.title}": ${r.errors?.[0]?.message || "create failed"}`);
+        } else {
+          const iss = r.data.issueCreate.issue;
+          results.push(`✅ ${iss.identifier} "${iss.title}" created`);
+          process.stderr.write(`  ✅ Linear: created ${iss.identifier} "${iss.title}"\n`);
+        }
+      } catch (e) { results.push(`❌ "${c.title}": ${e.message}`); }
+    }
+
+    return cleaned + `\n\n**Linear tasks created:**\n${results.join("\n")}`;
+  }
+
   // ── Execute DELEGATE block — call sub-agents, return structured results ──────
   async function runDelegations(delegations) {
     const allModels    = db.readModels();
@@ -390,14 +457,15 @@ ${identity}${linearCtx}${subAgentCtx}${fileAccessBlock}`;
             r.error ? `**${r.agentName}** (error): ${r.error}` : `**${r.agentName}**:\n${r.reply}`
           ).join("\n\n---\n\n");
           const synthSp  = `You are ${agent.name}. ${agent.role || ""}`;
-          const synthMsg = `Team responses for: "${userMessage || "the request"}"\n\n${synthCtx}\n\nProvide a clear, comprehensive final answer. If any sub-agent provided Linear update suggestions, include a %%LINEAR_UPDATES%% block.`;
+          const synthMsg = `Team responses for: "${userMessage || "the request"}"\n\n${synthCtx}\n\nProvide a clear, comprehensive final answer. If any sub-agent provided Linear update or create suggestions, include %%LINEAR_UPDATES%% and/or %%LINEAR_CREATE%% blocks.`;
           reply = await ai.callAIMessages(modelObj, provider, synthSp, [{ role: "user", content: synthMsg }]);
         }
       }
     }
 
-    // Apply Linear updates (from either direct reply or synthesis)
+    // Apply Linear updates and creates (from either direct reply or synthesis)
     reply = await applyLinearUpdates(reply);
+    reply = await applyLinearCreates(reply);
     return reply;
   }
 

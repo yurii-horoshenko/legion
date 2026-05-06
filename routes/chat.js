@@ -32,9 +32,18 @@ module.exports = function createChatRoutes(ctx) {
     return `\n\n## File System Access\nYou have read-only access to project files via these tools: **Read** (read file contents), **LS** (list directory), **Glob** (find files by pattern), **Grep** (search in files). Use them to analyse the codebase when your task requires it.`;
   }
 
-  // Generic Linear update format block — injected when agent.linearEnabled is true.
+  // Generic Linear actions format block — injected when agent.linearEnabled is true.
   function buildLinearFormatBlock() {
-    return `\n\n## Linear Update Format\nTo update Linear tasks, append this block at the END of your response:\n\n%%LINEAR_UPDATES%%\n[{"issueId":"PROJ-XX","stateName":"State","title":"Updated title","description":"What to do and why."}]\n%%END_LINEAR_UPDATES%%\n\n- \`issueId\` is required. \`stateName\`, \`title\`, \`description\` are optional — include only what you are changing.\n- Use only real issue IDs from your task list above.\n- Valid states: Backlog, Todo, In Progress, In Review, Done, Cancelled`;
+    return `\n\n## Linear Actions\n` +
+      `**Update existing tasks** — append at the END of your response:\n` +
+      `%%LINEAR_UPDATES%%\n[{"issueId":"PROJ-XX","stateName":"State","title":"Updated title","description":"What to do and why."}]\n%%END_LINEAR_UPDATES%%\n\n` +
+      `- \`issueId\` required. \`stateName\`, \`title\`, \`description\` optional — include only what you are changing.\n` +
+      `- Use only real issue IDs from the task list above.\n` +
+      `- Valid states: Backlog, Todo, In Progress, In Review, Done, Cancelled\n\n` +
+      `**Create new tasks** — append at the END of your response:\n` +
+      `%%LINEAR_CREATE%%\n[{"title":"Task title","description":"Markdown description","priority":"urgent|high|medium|low","labelNames":["Label Name"]}]\n%%END_LINEAR_CREATE%%\n\n` +
+      `- \`title\` required. \`priority\`: urgent, high, medium, low (default: medium). \`labelNames\`: array of label names.\n` +
+      `- Both blocks can appear together in the same response.`;
   }
 
   // Resolve the best model for a sub-agent: own model → haiku from same provider → default.
@@ -178,6 +187,68 @@ module.exports = function createChatRoutes(ctx) {
     return { cleanedReply, summary: `\n\n**Linear updates applied:**\n${results.join("\n")}` };
   }
 
+  async function applyLinearCreates(project, reply) {
+    const match = reply.match(/%%LINEAR_CREATE%%([\s\S]*?)%%END_LINEAR_CREATE%%/);
+    if (!match) return { cleanedReply: reply, summary: null };
+
+    const cleanedReply = reply.replace(/%%LINEAR_CREATE%%[\s\S]*?%%END_LINEAR_CREATE%%/g, "").trim();
+
+    const integ  = io.readIntegrations(project);
+    const apiKey = integ.linear?.apiKey;
+    if (!apiKey) return { cleanedReply, summary: "⚠️ Linear not configured — creates skipped." };
+
+    let creates;
+    try { creates = JSON.parse(match[1].trim()); } catch {
+      return { cleanedReply, summary: "⚠️ Could not parse LINEAR_CREATE block — invalid JSON." };
+    }
+    if (!Array.isArray(creates) || !creates.length) return { cleanedReply, summary: null };
+
+    const teamId = integ.linear?.defaultTeamId;
+    if (!teamId) return { cleanedReply, summary: "⚠️ Linear defaultTeamId not set — creates skipped." };
+
+    let labelMap = {};
+    try {
+      const lq = `{ team(id:"${teamId}") { labels { nodes { id name } } } }`;
+      const lr = await io.linearQuery(apiKey, lq);
+      const labels = lr.data?.team?.labels?.nodes || [];
+      labelMap = Object.fromEntries(labels.map(l => [l.name.toLowerCase(), l.id]));
+    } catch (e) { log.warn("chat:linear", `failed to fetch labels: ${e.message}`); }
+
+    const PRIORITY_MAP = { urgent: 1, high: 2, medium: 3, low: 4 };
+    const results = [];
+
+    for (const c of creates) {
+      if (!c.title) { results.push("⚠ skipped: missing title"); continue; }
+      const input = { title: c.title, teamId };
+      if (c.description) input.description = c.description;
+      if (c.priority)    input.priority = PRIORITY_MAP[c.priority.toLowerCase()] ?? 3;
+      if (c.labelNames?.length) {
+        const ids = c.labelNames.map(n => labelMap[n.toLowerCase()]).filter(Boolean);
+        if (ids.length) input.labelIds = ids;
+      }
+      try {
+        const q = `mutation($input:IssueCreateInput!){issueCreate(input:$input){success issue{identifier title url}}}`;
+        const r = await io.linearQuery(apiKey, q, { input });
+        if (r.errors || !r.data?.issueCreate?.success) {
+          results.push(`❌ "${c.title}": ${r.errors?.[0]?.message || "create failed"}`);
+        } else {
+          const iss = r.data.issueCreate.issue;
+          results.push(`✅ ${iss.identifier} "${iss.title}" created`);
+          log.info("chat:linear", `created ${iss.identifier} "${iss.title}"`);
+        }
+      } catch (e) { results.push(`❌ "${c.title}": ${e.message}`); }
+    }
+
+    return { cleanedReply, summary: `\n\n**Linear tasks created:**\n${results.join("\n")}` };
+  }
+
+  async function applyLinearActions(project, reply) {
+    const upd = await applyLinearUpdates(project, reply);
+    const cre = await applyLinearCreates(project, upd.cleanedReply);
+    const summary = [upd.summary, cre.summary].filter(Boolean).join("\n") || null;
+    return { cleanedReply: cre.cleanedReply, summary };
+  }
+
   // ── Orchestrator chat (agent has pipeline → delegation flow) ──────────────
 
   async function runOrchestratorChat(res, pid, aid, agent, message, lang, pipeline, modelObj, provider, cfg) {
@@ -223,7 +294,7 @@ module.exports = function createChatRoutes(ctx) {
         const sp   = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(lang) || ""}${identity}${allIssues}${linearFormat}${fileAccess}`;
         const msgs = [...history, { role: "user", content: message }];
         const reply = await ai.callAIMessages(modelObj, provider, sp, msgs, { allowedTools: agent.allowedTools || "" });
-        const { cleanedReply, summary } = await applyLinearUpdates(project, reply);
+        const { cleanedReply, summary } = await applyLinearActions(project, reply);
         const finalReply = summary ? cleanedReply + summary : cleanedReply;
         db?.appendChatHistory(pid, aid, "user",      message);
         db?.appendChatHistory(pid, aid, "assistant", finalReply);
@@ -253,7 +324,7 @@ module.exports = function createChatRoutes(ctx) {
       const delegateMatch = orchestratorReply.match(/<DELEGATE>([\s\S]*?)<\/DELEGATE>/);
       if (!delegateMatch) {
         // No delegation — orchestrator answered directly
-        const { cleanedReply, summary } = await applyLinearUpdates(project, orchestratorReply);
+        const { cleanedReply, summary } = await applyLinearActions(project, orchestratorReply);
         const finalReply = summary ? cleanedReply + summary : cleanedReply;
         db?.appendChatHistory(pid, aid, "user",      message);
         db?.appendChatHistory(pid, aid, "assistant", finalReply);
@@ -342,14 +413,14 @@ module.exports = function createChatRoutes(ctx) {
           r.error ? `**${r.agentName}** (error): ${r.error}` : `**${r.agentName}**:\n${r.reply}`
         ).join("\n\n---\n\n");
         const synthSystem  = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(lang) || ""}`;
-        const synthMessage = `Team responses for the request: "${message}"\n\n${synthCtx}\n\nProvide a clear, comprehensive answer. If any sub-agent provided Linear update suggestions, include a %%LINEAR_UPDATES%% block.`;
+        const synthMessage = `Team responses for the request: "${message}"\n\n${synthCtx}\n\nProvide a clear, comprehensive answer. If any sub-agent provided Linear update or create suggestions, preserve them using the exact format:\n%%LINEAR_UPDATES%%\n[...]\n%%END_LINEAR_UPDATES%%\nand/or\n%%LINEAR_CREATE%%\n[...]\n%%END_LINEAR_CREATE%%`;
 
         const synthTimer = log.timer();
         finalReply = await ai.callAIMessages(modelObj, provider, synthSystem, [{ role: "user", content: synthMessage }]);
         log.info("chat", `orchestrator synthesis done in ${synthTimer()}`);
       }
 
-      const { cleanedReply, summary } = await applyLinearUpdates(project, finalReply);
+      const { cleanedReply, summary } = await applyLinearActions(project, finalReply);
       if (summary) finalReply = cleanedReply + summary;
       else finalReply = cleanedReply;
 
@@ -508,7 +579,7 @@ module.exports = function createChatRoutes(ctx) {
         let reply = await ai.callAIMessages(modelObj, provider, systemPrompt, messages, { allowedTools: agent.allowedTools || "" });
         log.info("chat", `done agent="${agent.name}" in ${chatTimer()} history=${history.length}msgs`);
 
-        const { cleanedReply, summary } = await applyLinearUpdates(project, reply);
+        const { cleanedReply, summary } = await applyLinearActions(project, reply);
         if (summary) reply = cleanedReply + summary;
         else reply = cleanedReply;
 

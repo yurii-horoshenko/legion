@@ -2,7 +2,7 @@
 
 import { S, PROJECT_AGENTS, PROJECTS, AGENT_REGISTRY, CATALOG_AGENTS, addedAgentIds,
          setCatalogAgents, setCatalogLoaded, catalogLoaded, catalogFilter, catalogSearch,
-         setAddedAgentIds, LEGION_CONFIG } from '../modules/state.js';
+         setAddedAgentIds } from '../modules/state.js';
 import { $, $$, esc } from '../modules/utils.js';
 import { apiAddAgent } from '../modules/api.js';
 import { renderTree } from './sidebar.js';
@@ -126,19 +126,6 @@ export function renderCatalogGrid() {
       const id = btn.dataset.id;
       let agent = CATALOG_AGENTS.find(a => a.id === id);
       if (!agent || addedAgentIds.has(id)) return;
-
-      // Auto-apply default model if toggle is ON
-      if (LEGION_CONFIG.autoApplyModel !== false && LEGION_CONFIG.defaultModelId) {
-        agent = { ...agent, model: LEGION_CONFIG.defaultModelId };
-      }
-
-      // Auto-enable Linear if project toggle is ON
-      try {
-        const integ = await fetch(`/api/projects/${S.projectId}/integrations`).then(r => r.json());
-        if (integ.linear?.apiKey && integ.linear?.enableForAllAgents !== false) {
-          agent = { ...agent, linearEnabled: true, linearLabelName: agent.linearLabelName || agent.name };
-        }
-      } catch {}
 
       AGENT_REGISTRY[id] = agent;
       if (!PROJECT_AGENTS[S.projectId]) PROJECT_AGENTS[S.projectId] = [];

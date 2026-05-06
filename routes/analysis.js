@@ -193,6 +193,81 @@ module.exports = function createAnalysisRoutes(ctx) {
       return true;
     }
 
+    // GET /api/projects/:pid/agents/:aid/recommend-pipeline  (EventSource)
+    if (urlPath.match(/^\/api\/projects\/[^/]+\/agents\/[^/]+\/recommend-pipeline$/) && method === "GET") {
+      const parts = urlPath.split("/");
+      const pid = parts[3], aid = parts[5];
+      const { progress, done, fail } = http.createSSEHandler(res, req, "recommend-pipeline");
+
+      try {
+        const project = io.readProjects().find(p => p.id === pid);
+        if (!project) return fail("Project not found");
+
+        const cfg = io.readConfig();
+        if (!cfg.defaultModelId) return fail("No default model configured in Settings → General");
+
+        const resolved = http.resolveModel(io.readModels(), io.readProviders(), cfg.defaultModelId);
+        if (!resolved) return fail("Default model not found or provider not configured");
+        const { model, provider } = resolved;
+
+        const allAgents = io.readPAgents()[pid] || [];
+        const agent = allAgents.find(a => a.id === aid);
+        if (!agent) return fail("Agent not found");
+
+        const existingPipeline = ctx.db?.storeGet(pid, aid, "pipeline") || [];
+        const existingTargetIds = new Set(existingPipeline.map(t => t.targetAgentId));
+        const otherAgents = allAgents.filter(a => a.id !== aid && !existingTargetIds.has(a.id));
+
+        if (!otherAgents.length) return done({ recommendations: [] });
+
+        progress("Analysing team structure…");
+
+        const agentList = otherAgents.map(a =>
+          `- id: "${a.id}", name: "${a.name}", role: "${a.role || a.description || "no role"}"`
+        ).join("\n");
+
+        const alreadyConnected = existingPipeline.length
+          ? `Already connected: ${existingPipeline.map(t => allAgents.find(a => a.id === t.targetAgentId)?.name || t.targetAgentId).join(", ")}\n\n`
+          : "";
+
+        const prompt = `You are a software team architect. Recommend which agents should be in the pipeline of the current agent (i.e. it can delegate work to them).
+
+Current agent:
+- name: "${agent.name}"
+- role: "${agent.role || agent.description || "no role"}"
+
+${alreadyConnected}Available agents to connect:
+${agentList}
+
+Project: "${project.name}"${project.description ? ` — ${project.description}` : ""}
+
+Return JSON only (no markdown fences):
+{
+  "recommendations": [
+    {
+      "targetAgentId": "agent-id-here",
+      "condition": "always",
+      "mode": "parallel",
+      "reason": "One sentence why this connection makes sense."
+    }
+  ]
+}
+
+Rules:
+- condition: "always" (always trigger), "on_success" (only on success), "on_failure" (escalation/handoff)
+- mode: "parallel" (simultaneously), "sequential" (one after another)
+- Only recommend connections that make genuine organisational sense
+- Maximum 4 recommendations; empty array if none make sense`;
+
+        const raw = await ai.callAI(model, provider, prompt);
+        const result = http.parseAIJson(raw);
+        done({ recommendations: Array.isArray(result?.recommendations) ? result.recommendations : [] });
+      } catch (err) {
+        fail(err.message);
+      }
+      return true;
+    }
+
     // POST /api/projects/:pid/agents/:aid/tasks/:tid/decompose  (SSE)
     if (urlPath.match(/^\/api\/projects\/[^/]+\/agents\/[^/]+\/tasks\/[^/]+\/decompose$/) && method === "POST") {
       const parts = urlPath.split("/");

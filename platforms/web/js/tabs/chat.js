@@ -17,14 +17,17 @@ export function renderChat(a) {
       </div>
       <div class="chat-foot">
         <textarea class="chat-in" id="chat-in" rows="1" placeholder="Send a message…"></textarea>
+        <button class="chat-btn chat-btn-stop" id="chat-stop" style="display:none">■ Stop</button>
         <button class="chat-btn" id="chat-send">Send</button>
         <button class="chat-btn chat-btn-clear" id="chat-clear" title="Clear chat history">🗑</button>
       </div>
     </div>`;
 
-  const msgs  = $('#chat-msgs');
-  const input = $('#chat-in');
-  const btn   = $('#chat-send');
+  const msgs    = $('#chat-msgs');
+  const input   = $('#chat-in');
+  const btn     = $('#chat-send');
+  const stopBtn = $('#chat-stop');
+  let   activeAbort = null;
 
   // ── Per-agent state init ──────────────────────────────────────────────────
   if (!CHAT_STATE[a.id]) {
@@ -190,15 +193,16 @@ export function renderChat(a) {
       </div>`);
     msgs.scrollTop = msgs.scrollHeight;
     btn.disabled = true;
+    stopBtn.style.display = '';
 
-    const sendAbort = new AbortController();
-    const sendTimer = setTimeout(() => sendAbort.abort(), 300_000);
+    activeAbort = new AbortController();
+    const sendTimer = setTimeout(() => activeAbort.abort(), 300_000);
     try {
       const r = await fetch(`/api/projects/${S.projectId}/agents/${a.id}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: text, lang: i18n.lang }),
-        signal: sendAbort.signal,
+        signal: activeAbort.signal,
       });
       clearTimeout(sendTimer);
 
@@ -219,12 +223,15 @@ export function renderChat(a) {
       const el  = document.getElementById(thinkingId);
       const bub = el?.querySelector('.msg-bub');
       if (bub) {
-        bub.textContent = err.name === 'AbortError' ? 'Request timed out' : `Error: ${err.message}`;
-        bub.style.color = '#ef4444';
+        const stopped = err.name === 'AbortError' && activeAbort?.signal.aborted;
+        bub.textContent = stopped ? 'Stopped.' : err.name === 'AbortError' ? 'Request timed out' : `Error: ${err.message}`;
+        bub.style.color = stopped ? 'var(--text-3)' : '#ef4444';
         bub.style.fontStyle = 'italic';
       }
     } finally {
+      activeAbort = null;
       btn.disabled = false;
+      stopBtn.style.display = 'none';
       msgs.scrollTop = msgs.scrollHeight;
       // Capture final state of the agent bubble for session persistence
       const el = document.getElementById(thinkingId);
@@ -249,6 +256,7 @@ export function renderChat(a) {
   }
 
   btn.addEventListener('click', send);
+  stopBtn.addEventListener('click', () => { if (activeAbort) activeAbort.abort(); });
   $('#chat-clear').addEventListener('click', clearChat);
   input.addEventListener('input', autoGrow);
   input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });

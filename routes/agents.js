@@ -31,6 +31,12 @@ module.exports = function createAgentRoutes(ctx) {
       const existing  = map[projectId].findIndex(a => a.id === agent.id);
       const project   = io.readProjects().find(p => p.id === projectId);
       if (existing < 0) {
+        // Apply defaults for new agents
+        const cfg = io.readConfig();
+        if (!agent.model && cfg.defaultModelId) agent.model = cfg.defaultModelId;
+        if (agent.linearEnabled === undefined) agent.linearEnabled = true;
+        if (!agent.linearLabelName) agent.linearLabelName = agent.name || agent.id;
+        if (agent.allowedTools === undefined) agent.allowedTools = "Read,LS,Glob,Grep";
         map[projectId].push(agent);
         if (project) agentFs.writeAgentFile(project, agent);
       } else {
