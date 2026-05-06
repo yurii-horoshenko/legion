@@ -182,6 +182,41 @@ export function renderGeneral() {
       saveBtn.disabled = false;
     }
   };
+
+  // ── Auto-apply toggle (ON by default) ──────────────────────────────────
+  const toggle = $('#general-auto-apply');
+  if (toggle) {
+    toggle.checked = LEGION_CONFIG.autoApplyModel !== false;
+    toggle.addEventListener('change', async () => {
+      const updated = await fetch('/api/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ autoApplyModel: toggle.checked }),
+      }).then(r => r.json()).catch(() => null);
+      if (updated) setLegionConfig(updated);
+    });
+  }
+
+  // ── Linear "all agents" toggle ─────────────────────────────────────────
+  const linAllToggle = $('#general-linear-all');
+  if (linAllToggle && S.projectId) {
+    fetch(`/api/projects/${S.projectId}/integrations`)
+      .then(r => r.json())
+      .then(integ => {
+        linAllToggle.checked = (integ.linear?.enableForAllAgents !== false);
+        linAllToggle.addEventListener('change', async () => {
+          const current = await fetch(`/api/projects/${S.projectId}/integrations`).then(r => r.json()).catch(() => ({}));
+          const updated = { ...current, linear: { ...(current.linear || {}), enableForAllAgents: linAllToggle.checked } };
+          await fetch(`/api/projects/${S.projectId}/integrations`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updated),
+          }).catch(() => {});
+        });
+      }).catch(() => {
+        linAllToggle.checked = true;
+      });
+  }
 }
 
 // ── Providers ──────────────────────────────────────────────────────────────

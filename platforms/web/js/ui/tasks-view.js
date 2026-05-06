@@ -415,7 +415,7 @@ function renderLinearConnPanel(container, integ) {
           <button class="btn-cfg-save" id="lin-load-teams">Load Teams</button>
         </div>
       </div>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
         <button class="btn-danger-sm" id="lin-disconnect">Disconnect</button>
         <button class="btn-cfg-save" id="lin-save">Save</button>
       </div>
@@ -465,7 +465,7 @@ function wireLinearForm(integ) {
     const apiKey = $('#lin-key').value.trim();
     if (!apiKey) return;
     const teamId   = $('#lin-team')?.value || '';
-    const newInteg = { ...integ, linear: { apiKey, defaultTeamId: teamId, teams: linear.teams || [] } };
+    const newInteg = { ...integ, linear: { apiKey, defaultTeamId: teamId, teams: linear.teams || [], enableForAllAgents: linear.enableForAllAgents !== false } };
     btn.disabled = true; btn.textContent = 'Saving…';
     try {
       const r = await fetch(`/api/projects/${S.projectId}/integrations`, {

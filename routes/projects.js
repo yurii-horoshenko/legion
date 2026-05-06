@@ -5,7 +5,7 @@ const path   = require("path");
 const crypto = require("crypto");
 
 module.exports = function createProjectRoutes(ctx) {
-  const { io, http, agentFs, exec } = ctx;
+  const { io, http, agentFs, exec, db } = ctx;
   const { agentsDir } = io;
 
   return async function handle(urlPath, method, req, res, body) {
@@ -92,7 +92,7 @@ module.exports = function createProjectRoutes(ctx) {
       const id       = urlPath.slice("/api/projects/".length);
       const projects = io.readProjects();
       const project  = projects.find(p => p.id === id);
-      io.writeProjects(projects.filter(p => p.id !== id));
+      db.deleteProject(id); // removes project + agents + stores atomically
       // Remove project agent config
       try { fs.rmSync(path.join(agentsDir, `${id}.json`), { force: true }); } catch {}
       if (project?.path) {

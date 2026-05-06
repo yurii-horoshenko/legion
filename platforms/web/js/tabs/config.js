@@ -39,32 +39,18 @@ export function renderConfig(a) {
           ${modelOptions}
         </select>
         <button class="btn-cfg-save" id="cfg-model-save">Save</button>
-        ${hasPath ? `<button class="btn-cfg-activate" id="cfg-model-activate" title="Write this model to .claude/settings.json so Claude Code uses it">⚡ Activate in Claude Code</button>` : ''}
       </div>
       ${!MODELS.length ? `<div class="cfg-hint">Add models in Settings → Models first</div>` : ''}
-      ${hasPath ? `<div class="cfg-hint" id="cfg-activate-status"></div>` : ''}
     </div>
 
     <div class="cfg-section">
       <div class="cfg-section-label">Task Source</div>
-      <div class="cfg-task-source-row">
-        <label class="cfg-toggle-label">
-          <input type="checkbox" id="cfg-linear-toggle" ${a.linearEnabled ? 'checked' : ''} />
-          <span>Use Linear as task source</span>
+      <div class="cfg-auto-apply-row">
+        <label class="cfg-switch">
+          <input type="checkbox" id="cfg-linear-toggle" ${a.linearEnabled ? 'checked' : ''}>
+          <span class="cfg-switch-track"></span>
         </label>
-      </div>
-      <div id="cfg-linear-fields" ${!a.linearEnabled ? 'style="display:none"' : ''}>
-        <div class="cfg-linear-team-row">
-          <input class="field-input" id="cfg-linear-label-name" type="text"
-            value="${esc(a.linearLabelName || a.name || '')}" placeholder="Label name in Linear (default = agent name)" />
-        </div>
-        <div class="cfg-linear-team-row">
-          <input class="field-input" id="cfg-linear-team-id" type="text"
-            value="${esc(a.linearTeamId || '')}" placeholder="Team ID (leave empty for project default)" />
-        </div>
-        <div style="display:flex;justify-content:flex-end;margin-top:4px">
-          <button class="btn-cfg-save" id="cfg-linear-save">Save</button>
-        </div>
+        <div class="cfg-auto-apply-title">Linear</div>
       </div>
       <div class="cfg-hint">Configure Linear API key in <b>Settings → Integrations</b>.</div>
     </div>
@@ -110,62 +96,18 @@ export function renderConfig(a) {
     btn.textContent = 'Saved ✓'; setTimeout(() => btn.textContent = 'Save', 1500);
   });
 
-  // Activate in Claude Code
-  if (hasPath) {
-    $('#cfg-model-activate').addEventListener('click', async () => {
-      const activateBtn = $('#cfg-model-activate');
-      const statusEl    = $('#cfg-activate-status');
-      const modelId     = $('#cfg-model-sel').value;
-
-      a.model = modelId;
+  // Linear task source toggle — auto-save on change
+  const linearToggle = $('#cfg-linear-toggle');
+  if (linearToggle) {
+    linearToggle.addEventListener('change', async () => {
+      const enabled = linearToggle.checked;
       const map = (PROJECT_AGENTS[S.projectId] || []);
       const idx = map.findIndex(x => x.id === a.id);
-      if (idx >= 0) { map[idx] = { ...map[idx], model: modelId }; a = map[idx]; }
+      if (idx >= 0) { map[idx] = { ...map[idx], linearEnabled: enabled }; a = map[idx]; }
       await fetch(`/api/projects/${S.projectId}/agents`, { method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(a) });
-
-      activateBtn.textContent = '…';
-      try {
-        const r = await fetch(`/api/projects/${S.projectId}/agents/${a.id}/activate`, { method: 'POST' });
-        const d = await r.json();
-        if (d.ok) {
-          activateBtn.textContent = '⚡ Activate in Claude Code';
-          statusEl.textContent = d.model
-            ? `✓ Claude Code will use ${d.model} for this project`
-            : '✓ Claude Code will use the default model';
-          statusEl.style.color = 'var(--accent)';
-        } else {
-          throw new Error(d.error || 'Failed');
-        }
-      } catch (err) {
-        activateBtn.textContent = '⚡ Activate in Claude Code';
-        statusEl.textContent = `✗ ${err.message}`;
-        statusEl.style.color = '#ef4444';
-      }
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(a) });
     });
   }
-
-  // Linear task source toggle
-  const linearToggle = $('#cfg-linear-toggle');
-  const linearFields = $('#cfg-linear-fields');
-  if (linearToggle) {
-    linearToggle.addEventListener('change', () => {
-      if (linearFields) linearFields.style.display = linearToggle.checked ? '' : 'none';
-    });
-  }
-  $('#cfg-linear-save')?.addEventListener('click', async () => {
-    const btn       = $('#cfg-linear-save');
-    const enabled   = $('#cfg-linear-toggle')?.checked || false;
-    const labelName = $('#cfg-linear-label-name')?.value.trim() || '';
-    const teamId    = $('#cfg-linear-team-id')?.value.trim() || '';
-    const map = (PROJECT_AGENTS[S.projectId] || []);
-    const idx = map.findIndex(x => x.id === a.id);
-    if (idx >= 0) { map[idx] = { ...map[idx], linearEnabled: enabled, linearLabelName: labelName, linearTeamId: teamId }; a = map[idx]; }
-    await fetch(`/api/projects/${S.projectId}/agents`, { method: 'POST',
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(a) });
-    if (btn) { btn.textContent = 'Saved ✓'; setTimeout(() => { btn.textContent = 'Save'; }, 1500); }
-  });
 
   if (!hasPath) return;
 

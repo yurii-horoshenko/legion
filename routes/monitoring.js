@@ -71,6 +71,15 @@ module.exports = function createMonitoringRoutes(ctx) {
       return true;
     }
 
+    // GET /api/chat-logs?pid=&limit=  — full orchestration logs for current session
+    if (urlPath === "/api/chat-logs" && method === "GET") {
+      const qs    = new URL(req.url, "http://x").searchParams;
+      const pid   = qs.get("pid") || undefined;
+      const limit = Math.min(parseInt(qs.get("limit") || "200", 10), 1000);
+      http.json(res, 200, db.getChatLogs(pid, limit));
+      return true;
+    }
+
     return false;
   };
 };

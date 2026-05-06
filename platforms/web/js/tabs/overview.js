@@ -1,6 +1,6 @@
 // ── Agent Overview tab ─────────────────────────────────────────────────────
 
-import { S, PROJECT_AGENTS, PROJECTS } from '../modules/state.js';
+import { S, PROJECT_AGENTS, PROJECTS, CHAT_STATE } from '../modules/state.js';
 import { $, esc } from '../modules/utils.js';
 import { AGENT_REGISTRY } from '../modules/state.js';
 import { apiRemoveAgent } from '../modules/api.js';
@@ -8,6 +8,7 @@ import { renderTree } from '../ui/sidebar.js';
 import { showDash } from '../ui/dashboard.js';
 import i18n from '../i18n.js';
 import { removeFromAddedIds } from '../ui/catalog.js';
+import { getAgentCharacter } from '../modules/agent-characters.js';
 
 const RANK_NAMES = [
   'Recruit','Apprentice','Apprentice','Operative','Operative',
@@ -34,7 +35,7 @@ function parseFile(raw) {
   const words   = real.join(' ').split(/\s+/).filter(Boolean).length;
   const bullets = real.filter(l => /^[-*•]\s|\d+\.\s/.test(l.trim())).length;
   const sections= (text.match(/^#{1,3}\s/gm) || []).length;
-  const todos   = (text.match(/\bTODO\b|\bTBD\b/gi) || []).length;
+  const todos   = (text.match(/\bTODO\b|\bTBD\b/g) || []).length;
 
   return { words, bullets, sections, todos };
 }
@@ -212,7 +213,7 @@ export async function renderAgentOverview(a) {
       <!-- LEFT: character card -->
       <div class="ov-char">
         <div class="ov-char-frame" id="ov-avatar-wrap" style="${frameStyle}">
-          <img class="ov-char-img" src="${hasAvatar ? avatarUrl : '/assets/characters/default.png'}" alt="avatar">
+          <img class="ov-char-img" src="${hasAvatar ? avatarUrl : getAgentCharacter(a.catalogId || a.id)}" alt="avatar">
           <div class="ov-char-overlay">📷</div>
           <div class="ov-level-badge">Lv.${level}</div>
         </div>
@@ -229,6 +230,7 @@ export async function renderAgentOverview(a) {
           <div class="ov-char-meta-row">${esc(a.id)}</div>
           ${a.model ? `<div class="ov-char-meta-row">${esc(a.model)}</div>` : ''}
         </div>
+        <button class="btn-reset-state btn-danger-sm" id="ov-reset-state">↺ Reset state</button>
         <button class="btn-danger btn-danger-sm" id="ov-remove-agent">${esc(i18n.t('ov_remove_btn'))}</button>
       </div>
 
@@ -266,6 +268,29 @@ export async function renderAgentOverview(a) {
     });
     wrap.style.opacity = '';
     renderAgentOverview(a);
+  });
+
+  $('#ov-reset-state').addEventListener('click', async () => {
+    if (!confirm(`Reset "${a.name}" state?\n\nThis will clear: tasks, memories, chat history.\nSkills, Soul, and Identity files are not touched.`)) return;
+    const btn = $('#ov-reset-state');
+    btn.disabled = true;
+    btn.textContent = '…';
+    try {
+      const del = (store, id) => fetch(`/api/projects/${pid}/agents/${aid}/${store}/${id}`, { method: 'DELETE' });
+      const [ts, ms] = await Promise.all([
+        fetch(`/api/projects/${pid}/agents/${aid}/tasks`).then(r => r.json()).catch(() => []),
+        fetch(`/api/projects/${pid}/agents/${aid}/memories`).then(r => r.json()).catch(() => []),
+      ]);
+      await Promise.all([
+        ...ts.map(t => del('tasks',    t.id)),
+        ...ms.map(m => del('memories', m.id)),
+        fetch(`/api/projects/${pid}/agents/${aid}/chat/history`, { method: 'DELETE' }),
+      ]);
+      // Clear in-memory chat state so intro re-fetches on next visit
+      delete CHAT_STATE[aid];
+    } finally {
+      renderAgentOverview(a);
+    }
   });
 
   $('#ov-remove-agent').addEventListener('click', async () => {

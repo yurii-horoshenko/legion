@@ -22,7 +22,11 @@ module.exports = function startServer({ port, doOpen, webRoot }) {
   const agentsBaseDir = path.resolve(webRoot, "../../core/agents");
 
   const httpLib  = require("../lib/http");
+  const log      = require("../lib/log");
   const db       = require("../lib/db")(configDir);
+
+  db.clearChatLogs();
+  log.info("server", "chat logs cleared for this session");
   const io       = require("../lib/io")(configDir, db);
   const aiLib    = require("../lib/ai")(httpLib, io);
   const agentFs  = require("../lib/agents-fs")(io, agentsBaseDir, webRoot);
@@ -48,6 +52,17 @@ module.exports = function startServer({ port, doOpen, webRoot }) {
     try {
       const { method } = req;
       const urlPath = req.url.split("?")[0];
+
+      if (urlPath.startsWith("/api/")) {
+        const reqTimer = log.timer();
+        res.on("finish", () => {
+          const s = res.statusCode;
+          // HEAD /avatar → 404 is expected when no custom avatar is set
+          if (method === "HEAD" && urlPath.endsWith("/avatar") && s === 404) return;
+          const lvl = s >= 500 ? "error" : s >= 400 ? "warn" : "info";
+          log[lvl]("http", `${method} ${urlPath} → ${s} in ${reqTimer()}`);
+        });
+      }
 
       // OPTIONS
       if (method === "OPTIONS") {
@@ -81,7 +96,7 @@ module.exports = function startServer({ port, doOpen, webRoot }) {
       }
 
       // Static files
-      let filePath = path.join(webRoot, urlPath === "/" ? "/index.html" : urlPath);
+      let filePath = path.join(webRoot, decodeURIComponent(urlPath === "/" ? "/index.html" : urlPath));
       const ext    = path.extname(filePath).toLowerCase();
 
       if (!filePath.startsWith(webRoot)) {

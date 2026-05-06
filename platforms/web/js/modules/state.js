@@ -2,6 +2,10 @@
 
 export const S = { projectId: null, agentId: null, tab: 'overview', dropOpen: false };
 
+// Per-agent chat state: persists across tab switches within one browser session
+// agentId → { introFetched, introText, messages: [{html}], historyLoaded }
+export const CHAT_STATE = {};
+
 // Per-project agent lists (loaded from API)
 export const PROJECT_AGENTS = {};  // projectId → [agentObject]
 

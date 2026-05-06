@@ -121,6 +121,74 @@ module.exports = function createLinearRoutes(ctx) {
       return true;
     }
 
+    // GET /api/projects/:pid/linear/states?teamId= — workflow states for a team
+    if (urlPath.match(/^\/api\/projects\/[^/]+\/linear\/states$/) && method === "GET") {
+      const parts   = urlPath.split("/");
+      const project = io.readProjects().find(p => p.id === parts[3]);
+      if (!project?.path) { http.json(res, 404, { error: "Project not found" }); return true; }
+      const integ  = io.readIntegrations(project);
+      const apiKey = integ.linear?.apiKey;
+      if (!apiKey) { http.json(res, 400, { error: "Linear API key not configured" }); return true; }
+      const qs     = Object.fromEntries(new URL("http://l" + req.url).searchParams);
+      const teamId = qs.teamId || integ.linear?.defaultTeamId;
+      try {
+        const q = teamId
+          ? `{ team(id:"${teamId}") { states { nodes { id name color type } } } }`
+          : `{ teams { nodes { states { nodes { id name color type } } } } }`;
+        const result = await io.linearQuery(apiKey, q);
+        if (result.errors) { http.json(res, 400, { error: result.errors[0]?.message }); return true; }
+        const states = teamId
+          ? (result.data?.team?.states?.nodes || [])
+          : (result.data?.teams?.nodes?.flatMap(t => t.states?.nodes || []) || []);
+        http.json(res, 200, states);
+      } catch (e) { http.json(res, 500, { error: e.message }); }
+      return true;
+    }
+
+    // PATCH /api/projects/:pid/linear/issues/:iid — update status (and optionally title/description)
+    if (urlPath.match(/^\/api\/projects\/[^/]+\/linear\/issues\/[^/]+$/) && method === "PATCH") {
+      const parts   = urlPath.split("/");
+      const project = io.readProjects().find(p => p.id === parts[3]);
+      if (!project?.path) { http.json(res, 404, { error: "Project not found" }); return true; }
+      const integ  = io.readIntegrations(project);
+      const apiKey = integ.linear?.apiKey;
+      if (!apiKey) { http.json(res, 400, { error: "Linear API key not configured" }); return true; }
+      const issueId = parts[6];
+      const { stateId, stateName, title, description } = body;
+
+      try {
+        let resolvedStateId = stateId;
+
+        // Resolve state by name if stateId not given directly
+        if (!resolvedStateId && stateName) {
+          const teamId = integ.linear?.defaultTeamId;
+          const sq = teamId
+            ? `{ team(id:"${teamId}") { states { nodes { id name } } } }`
+            : `{ teams { nodes { states { nodes { id name } } } } }`;
+          const sr = await io.linearQuery(apiKey, sq);
+          const states = teamId
+            ? (sr.data?.team?.states?.nodes || [])
+            : (sr.data?.teams?.nodes?.flatMap(t => t.states?.nodes || []) || []);
+          const match = states.find(s => s.name.toLowerCase() === stateName.toLowerCase());
+          if (!match) { http.json(res, 400, { error: `State "${stateName}" not found` }); return true; }
+          resolvedStateId = match.id;
+        }
+
+        const input = {};
+        if (resolvedStateId) input.stateId = resolvedStateId;
+        if (title !== undefined) input.title = title;
+        if (description !== undefined) input.description = description;
+        if (!Object.keys(input).length) { http.json(res, 400, { error: "Nothing to update" }); return true; }
+
+        const q = `mutation($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$id,input:$input){success issue{id identifier state{id name}}}}`;
+        const result = await io.linearQuery(apiKey, q, { id: issueId, input });
+        if (result.errors) { http.json(res, 400, { error: result.errors[0]?.message || JSON.stringify(result.errors) }); return true; }
+        if (!result.data?.issueUpdate?.success) { http.json(res, 400, { error: "issueUpdate returned success:false" }); return true; }
+        http.json(res, 200, { ok: true, issue: result.data.issueUpdate.issue });
+      } catch (e) { http.json(res, 500, { error: e.message }); }
+      return true;
+    }
+
     // PATCH /api/projects/:pid/linear/issues/:iid/labels — set labels on an issue
     if (urlPath.match(/^\/api\/projects\/[^/]+\/linear\/issues\/[^/]+\/labels$/) && method === "PATCH") {
       const parts   = urlPath.split("/");

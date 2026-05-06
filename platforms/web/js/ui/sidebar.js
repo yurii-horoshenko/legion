@@ -12,7 +12,7 @@ export function projectAgents() {
 }
 
 export function renderTree() {
-  const agents = projectAgents();
+  const agents = projectAgents().slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
   const countEl = $('#rail-agents-count');
   if (countEl) countEl.textContent = agents.length ? `(${agents.length})` : '';

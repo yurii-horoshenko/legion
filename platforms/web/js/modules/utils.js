@@ -32,3 +32,14 @@ export function relTime(iso) {
 export function tabDescHtml(tab) {
   return `<p class="tab-desc">${esc(i18n.t(`tab_desc_${tab}`))}</p>`;
 }
+
+export function renderMd(raw) {
+  return String(raw ?? '')
+    .split('\n')
+    .map(line => {
+      const e = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const b = e.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      return /^\s*\* /.test(line) ? '• ' + b.replace(/^\s*\* /, '') : b;
+    })
+    .join('<br>');
+}
