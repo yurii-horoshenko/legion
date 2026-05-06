@@ -33,7 +33,13 @@ module.exports = function createAgentRoutes(ctx) {
       if (existing < 0) {
         // Apply defaults for new agents
         const cfg = io.readConfig();
-        if (!agent.model && cfg.defaultModelId) agent.model = cfg.defaultModelId;
+        if (!agent.model && cfg.defaultModelId) {
+          // Resolve to modelId string (e.g. "claude-sonnet-4-6") so the UI dropdown matches correctly.
+          // cfg.defaultModelId may be a record UUID or a modelId string — handle both.
+          const models = io.readModels();
+          const def = models.find(m => m.id === cfg.defaultModelId || m.modelId === cfg.defaultModelId);
+          agent.model = def?.modelId || cfg.defaultModelId;
+        }
         if (agent.linearEnabled === undefined) agent.linearEnabled = true;
         if (!agent.linearLabelName) agent.linearLabelName = agent.name || agent.id;
         if (agent.allowedTools === undefined) agent.allowedTools = "Read,LS,Glob,Grep";

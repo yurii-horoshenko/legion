@@ -25,7 +25,7 @@ export function renderConfig(a) {
     ? MODELS.map(m => {
         const prov = PROVIDERS.find(p => p.id === m.providerId);
         const label = prov ? `${prov.name} / ${m.name}` : m.name;
-        const sel = (a.model === m.modelId || a.modelId === m.modelId) ? ' selected' : '';
+        const sel = (a.model === m.modelId || a.model === m.id || a.modelId === m.modelId) ? ' selected' : '';
         return `<option value="${m.modelId}"${sel}>${label}</option>`;
       }).join('')
     : '<option value="">— No models configured —</option>';
