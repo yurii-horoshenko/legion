@@ -157,19 +157,35 @@ module.exports = function createChatRoutes(ctx) {
       return { cleanedReply, summary: `⚠️ Could not fetch Linear states: ${e.message}` };
     }
 
+    // Resolve identifier (e.g. "VIS-33") → internal UUID
+    async function resolveIssueId(rawId) {
+      if (!rawId) return null;
+      if (/^[0-9a-f-]{36}$/.test(rawId)) return rawId; // already a UUID
+      // Identifier format: fetch via issue(id:) which accepts both
+      try {
+        const r = await io.linearQuery(apiKey, `{ issue(id:"${rawId}") { id } }`);
+        return r.data?.issue?.id || null;
+      } catch { return null; }
+    }
+
     const results = [];
     for (const u of updates) {
+      const rawId  = u.issueId || u.id; // accept both field names
+      const label  = rawId || "(no id)";
       const stateId = u.stateId || stateMap[u.stateName?.toLowerCase()];
       const input = {};
       if (stateId)       input.stateId     = stateId;
       if (u.title)       input.title       = u.title;
       if (u.description) input.description = u.description;
-      if (!Object.keys(input).length) { results.push(`⚠ ${u.issueId}: nothing to update`); continue; }
+      if (!Object.keys(input).length) { results.push(`⚠ ${label}: nothing to update`); continue; }
+      if (!rawId) { results.push(`⚠ skipped: issueId missing in LINEAR_UPDATES entry`); continue; }
       try {
+        const uuid = await resolveIssueId(rawId);
+        if (!uuid) { results.push(`❌ ${label}: could not resolve issue — check the identifier`); continue; }
         const q = `mutation($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$id,input:$input){success issue{identifier title state{name}}}}`;
-        const r = await io.linearQuery(apiKey, q, { id: u.issueId, input });
+        const r = await io.linearQuery(apiKey, q, { id: uuid, input });
         if (r.errors || !r.data?.issueUpdate?.success) {
-          results.push(`❌ ${u.issueId}: ${r.errors?.[0]?.message || "update failed"}`);
+          results.push(`❌ ${label}: ${r.errors?.[0]?.message || "update failed"}`);
         } else {
           const iss = r.data.issueUpdate.issue;
           const parts = [`✅ ${iss.identifier}`];
@@ -180,7 +196,7 @@ module.exports = function createChatRoutes(ctx) {
           log.info("chat:linear", `updated ${iss.identifier}${stateId ? ` → ${iss.state?.name}` : ""}${u.title ? ` title updated` : ""}`);
         }
       } catch (e) {
-        results.push(`❌ ${u.issueId}: ${e.message}`);
+        results.push(`❌ ${label}: ${e.message}`);
       }
     }
 
