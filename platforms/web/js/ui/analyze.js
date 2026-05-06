@@ -18,6 +18,20 @@ export function renderAnalyze() {
   $('#analyze-no-model').style.display = hasModel ? 'none' : 'block';
   $('#btn-analyze-run').disabled = !hasModel || !project;
   $('#analyze-body').innerHTML = '';
+
+  // Show skill-match entry point if agents already exist (no need to re-run analysis)
+  if (S.projectId && projectAgents().length > 0) {
+    const wrap = document.createElement('div');
+    wrap.className = 'analyze-skills-standalone';
+    wrap.innerHTML = `
+      <div class="analyze-skills-standalone-hint">Your team has ${projectAgents().length} agent${projectAgents().length === 1 ? '' : 's'}. Find the best skills for each one:</div>
+      <button class="btn-analyze-all" id="btn-match-skills-standalone">✦ Match Skills to Agents</button>
+      <div id="analyze-skills-standalone-body"></div>`;
+    $('#analyze-body').appendChild(wrap);
+    wrap.querySelector('#btn-match-skills-standalone').addEventListener('click', function () {
+      runSkillMatching(this, wrap.querySelector('#analyze-skills-standalone-body'));
+    });
+  }
 }
 
 let _analyzeController = null;
@@ -204,6 +218,20 @@ export async function runAnalyze() {
       </div>`;
     $('#analyze-body').appendChild(resultsEl);
 
+    // Skills section — always shown after analysis
+    const skillsSection = document.createElement('div');
+    skillsSection.className = 'analyze-section-group analyze-skills-section';
+    skillsSection.innerHTML = `
+      <div class="analyze-group-label">
+        Skills for your team
+        <button class="btn-analyze-all" id="btn-match-skills-results">✦ Match Skills to Agents</button>
+      </div>
+      <div id="analyze-skills-results-body"></div>`;
+    resultsEl.appendChild(skillsSection);
+    skillsSection.querySelector('#btn-match-skills-results').addEventListener('click', function () {
+      runSkillMatching(this, skillsSection.querySelector('#analyze-skills-results-body'));
+    });
+
     async function addAgent(ag, btn) {
       if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
       const catalogEntry = CATALOG_AGENTS.find(c => c.id === ag.id) ||
@@ -277,5 +305,144 @@ export async function runAnalyze() {
     runBtn.disabled = false;
     runBtn.textContent = '✦ Analyze';
     if (stopBtn) stopBtn.style.display = 'none';
+  }
+}
+
+// ── Skill matching for all project agents ────────────────────────────────────
+
+async function runSkillMatching(btn, container) {
+  const agents = projectAgents();
+  if (!agents.length) {
+    container.innerHTML = '<div class="analyze-empty">No agents in this project yet. Add agents first.</div>';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Matching…';
+  container.innerHTML = '';
+
+  // Apply All button — enabled once all agents have loaded
+  const applyAllWrap = document.createElement('div');
+  applyAllWrap.className = 'analyze-skills-apply-row';
+  applyAllWrap.innerHTML = `<button class="btn-analyze-all" id="btn-skills-apply-all" disabled>⚡ Apply All Skills</button>`;
+  container.appendChild(applyAllWrap);
+
+  const allResults = {}; // agentId → skills[]
+
+  // Grid of per-agent cards
+  const grid = document.createElement('div');
+  grid.className = 'analyze-skills-grid';
+  container.appendChild(grid);
+
+  for (const agent of agents) {
+    const card = document.createElement('div');
+    card.className = 'analyze-skills-agent-card';
+    card.innerHTML = `
+      <div class="analyze-skills-agent-head">
+        <span class="analyze-skills-agent-name">${esc(agent.name)}</span>
+        <span class="analyze-skills-agent-status" id="sk-status-${esc(agent.id)}">⏳ Loading…</span>
+      </div>
+      <div class="analyze-skills-list" id="sk-list-${esc(agent.id)}"></div>`;
+    grid.appendChild(card);
+  }
+
+  // Run suggest-skills per agent sequentially to avoid rate limits
+  for (const agent of agents) {
+    const statusEl = container.querySelector(`#sk-status-${agent.id}`);
+    const listEl   = container.querySelector(`#sk-list-${agent.id}`);
+
+    await new Promise(resolve => {
+      const es = new EventSource(`/api/projects/${S.projectId}/agents/${agent.id}/suggest-skills`);
+
+      es.onmessage = e => {
+        const d = JSON.parse(e.data);
+
+        if (d.type === 'progress' && statusEl) {
+          statusEl.textContent = `⏳ ${d.message}`;
+        }
+
+        if (d.type === 'done') {
+          es.close();
+          const skills = d.result?.skills || [];
+          allResults[agent.id] = skills;
+          if (statusEl) statusEl.textContent = `${skills.length} skill${skills.length === 1 ? '' : 's'} found`;
+
+          if (!skills.length) {
+            if (listEl) listEl.innerHTML = '<div class="analyze-empty">No recommendations found.</div>';
+          } else {
+            if (listEl) {
+              listEl.innerHTML = `
+                <button class="btn-analyze-agent-assign-all" data-agent="${esc(agent.id)}">⚡ Assign All for ${esc(agent.name)}</button>
+                <div class="analyze-skills-chips">
+                  ${skills.map(s => `
+                    <div class="analyze-skill-chip">
+                      <div class="analyze-skill-chip-top">
+                        <span class="sk-type-icon">${s.type === 'mcp' ? '🔌' : '⚡'}</span>
+                        <span class="analyze-skill-name">${esc(s.name)}</span>
+                        ${s.source ? `<span class="analyze-skill-source">${esc(s.source)}</span>` : ''}
+                        <button class="btn-assign-one-skill" data-agent="${esc(agent.id)}" data-skill="${esc(s.name)}">+ Assign</button>
+                      </div>
+                      ${s.reason ? `<div class="analyze-skill-reason">${esc(s.reason)}</div>` : ''}
+                      ${s.install ? `<code class="sk-install">${esc(s.install)}</code>` : ''}
+                    </div>`).join('')}
+                </div>`;
+
+              listEl.querySelectorAll('.btn-assign-one-skill').forEach(b => {
+                b.addEventListener('click', async () => {
+                  b.textContent = '…'; b.disabled = true;
+                  const r = await fetch(`/api/projects/${S.projectId}/agents/${b.dataset.agent}/skills/${encodeURIComponent(b.dataset.skill)}`, { method: 'POST' });
+                  b.textContent = r.ok ? '✓' : '✗';
+                });
+              });
+
+              const agentAllBtn = listEl.querySelector(`.btn-analyze-agent-assign-all`);
+              if (agentAllBtn) {
+                agentAllBtn.addEventListener('click', async () => {
+                  agentAllBtn.disabled = true; agentAllBtn.textContent = 'Assigning…';
+                  await Promise.all(skills.map(s =>
+                    fetch(`/api/projects/${S.projectId}/agents/${agent.id}/skills/${encodeURIComponent(s.name)}`, { method: 'POST' })
+                  ));
+                  agentAllBtn.textContent = '✓ Done';
+                  listEl.querySelectorAll('.btn-assign-one-skill').forEach(b => { b.textContent = '✓'; b.disabled = true; });
+                });
+              }
+            }
+          }
+          resolve();
+        }
+
+        if (d.type === 'error') {
+          es.close();
+          if (statusEl) statusEl.textContent = '✗ Error';
+          if (listEl) listEl.innerHTML = `<div class="analyze-empty">✗ ${esc(d.message)}</div>`;
+          resolve();
+        }
+      };
+
+      es.onerror = () => {
+        es.close();
+        if (statusEl) statusEl.textContent = '✗ Failed';
+        resolve();
+      };
+    });
+  }
+
+  btn.disabled = false;
+  btn.textContent = '✓ Done — run again?';
+
+  // Enable Apply All
+  const applyAllBtn = container.querySelector('#btn-skills-apply-all');
+  if (applyAllBtn) {
+    applyAllBtn.disabled = false;
+    applyAllBtn.addEventListener('click', async () => {
+      applyAllBtn.disabled = true; applyAllBtn.textContent = 'Applying all…';
+      for (const [agentId, skills] of Object.entries(allResults)) {
+        await Promise.all(skills.map(s =>
+          fetch(`/api/projects/${S.projectId}/agents/${agentId}/skills/${encodeURIComponent(s.name)}`, { method: 'POST' })
+        ));
+      }
+      container.querySelectorAll('.btn-assign-one-skill, .btn-analyze-agent-assign-all').forEach(b => { b.textContent = '✓'; b.disabled = true; });
+      applyAllBtn.textContent = '✓ All Skills Applied';
+    });
   }
 }
