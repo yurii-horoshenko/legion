@@ -416,20 +416,27 @@ module.exports = function createChatRoutes(ctx) {
 
       let finalReply;
 
-      if (delegations.length === 1 && results[0] && !results[0].error) {
-        // Single delegate — skip synthesis, return their reply directly
+      // Always synthesize when orchestrator has Linear enabled — sub-agents don't
+      // know about Linear, so PM must review their work and decide what to update.
+      const needsSynthesis = agent.linearEnabled || delegations.length !== 1 || !results[0] || results[0].error;
+
+      if (!needsSynthesis) {
         log.info("chat", `orchestrator single-delegate, skipping synthesis`);
         finalReply = results[0].reply;
       } else {
-        // Multiple delegates or errors — synthesize
         sse({ type: "progress", text: "Synthesizing team responses…" });
         log.info("chat", `orchestrator synthesizing ${results.length} results`);
 
-        const synthCtx     = results.map(r =>
+        const synthCtx = results.map(r =>
           r.error ? `**${r.agentName}** (error): ${r.error}` : `**${r.agentName}**:\n${r.reply}`
         ).join("\n\n---\n\n");
-        const synthSystem  = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(lang) || ""}`;
-        const synthMessage = `Team responses for the request: "${message}"\n\n${synthCtx}\n\nProvide a clear, comprehensive answer. If any sub-agent provided Linear update or create suggestions, preserve them using the exact format:\n%%LINEAR_UPDATES%%\n[...]\n%%END_LINEAR_UPDATES%%\nand/or\n%%LINEAR_CREATE%%\n[...]\n%%END_LINEAR_CREATE%%`;
+
+        // Include Linear context so PM can make decisions about task updates
+        const synthSystem  = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(lang) || ""}${allIssues}${linearFormat}`;
+        const linearInstruction = agent.linearEnabled
+          ? `\n\nBased on the user's original request and the team's response, decide if any Linear tasks need to be created or updated, and include the appropriate %%LINEAR_UPDATES%% or %%LINEAR_CREATE%% blocks at the END of your response.`
+          : "";
+        const synthMessage = `Original user request: "${message}"\n\nTeam responses:\n\n${synthCtx}\n\nProvide a clear, comprehensive answer that combines the team's work.${linearInstruction}`;
 
         const synthTimer = log.timer();
         finalReply = await ai.callAIMessages(modelObj, provider, synthSystem, [{ role: "user", content: synthMessage }]);
