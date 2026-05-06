@@ -179,6 +179,24 @@ module.exports = function createAnalysisRoutes(ctx) {
         progress("Parsing response…");
         const result = http.parseAIJson(pass2Raw);
         if (result.agents) {
+          // Resolve AI-suggested IDs to actual catalog entries — AI sometimes hallucinates
+          // IDs that don't exist (e.g. "project-manager" vs "senior-project-manager").
+          const catById   = new Map(catalogAgents.map(a => [a.id, a]));
+          const catByName = new Map(catalogAgents.map(a => [a.name.toLowerCase(), a]));
+          result.agents = result.agents.map(ag => {
+            if (catById.has(ag.id)) return ag; // exact catalog match — good
+            // Try name match
+            const byName = catByName.get(ag.name.toLowerCase());
+            if (byName) return { ...ag, id: byName.id, name: byName.name };
+            // Try partial word match on ID (e.g. "project-manager" → "senior-project-manager")
+            const words  = (ag.id || '').split('-').filter(Boolean);
+            const fuzzy  = words.length
+              ? catalogAgents.find(a => words.every(w => a.id.includes(w)))
+              : null;
+            if (fuzzy) return { ...ag, id: fuzzy.id, name: fuzzy.name };
+            // No catalog match — keep as-is; will become a custom agent
+            return ag;
+          });
           result.agents = result.agents.filter(a => !existingNames.has(a.name.toLowerCase()) && !existingIds.has(a.id));
         }
         progress(`Done — ${result.agents?.length || 0} agents recommended, ${result.pipelines?.length || 0} pipelines suggested`);
