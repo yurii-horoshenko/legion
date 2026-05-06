@@ -9,27 +9,65 @@ const log  = require("../lib/log");
 const introCache = new Map();
 const INTRO_TTL_MS = 60 * 60 * 1000; // 1 hour
 
+// States that should not appear in agent context (terminal states)
+const DONE_STATES = new Set(["done", "cancelled", "duplicate"]);
+
 module.exports = function createChatRoutes(ctx) {
   const { io, http, ai, db, ws } = ctx;
 
-  // Fetch agent's Linear issues and format them for the system prompt.
-  // Returns empty string if Linear is not configured or agent has no label.
-  async function buildLinearContext(project, agent) {
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  // Load IDENTITY.md for an agent. Returns "" if not found.
+  function loadIdentity(project, agentId) {
     if (!project?.path) return "";
+    try {
+      const f = path.join(project.path, ".legion", "agents", agentId, "IDENTITY.md");
+      return fs.existsSync(f) ? "\n\n## Identity\n\n" + fs.readFileSync(f, "utf8") : "";
+    } catch { return ""; }
+  }
+
+  // Generic Linear update format block — injected when agent.linearEnabled is true.
+  function buildLinearFormatBlock() {
+    return `\n\n## Linear Update Format\nTo update Linear tasks, append this block at the END of your response:\n\n%%LINEAR_UPDATES%%\n[{"issueId":"PROJ-XX","stateName":"State","title":"Updated title","description":"What to do and why."}]\n%%END_LINEAR_UPDATES%%\n\n- \`issueId\` is required. \`stateName\`, \`title\`, \`description\` are optional — include only what you are changing.\n- Use only real issue IDs from your task list above.\n- Valid states: Backlog, Todo, In Progress, In Review, Done, Cancelled`;
+  }
+
+  // Resolve the best model for a sub-agent: own model → haiku from same provider → default.
+  function resolveSubAgentModel(subAgent, allModels, allProviders, orchestratorProviderType, defaultModelId) {
+    if (subAgent.model) {
+      const r = http.resolveModel(allModels, allProviders, subAgent.model);
+      if (r) return r;
+    }
+    const haiku = allModels.find(m =>
+      (m.modelId || "").toLowerCase().includes("haiku") &&
+      allProviders.find(p => p.id === m.providerId)?.type === orchestratorProviderType
+    );
+    if (haiku) {
+      const r = http.resolveModel(allModels, allProviders, haiku.id);
+      if (r) return r;
+    }
+    return http.resolveModel(allModels, allProviders, defaultModelId);
+  }
+
+  // ── Linear context builders ───────────────────────────────────────────────
+
+  // Fetch agent's own labeled Linear issues (for non-orchestrators).
+  async function buildLinearContext(project, agent) {
+    if (!project?.path || !agent.linearEnabled || !agent.linearLabelName) return "";
     const integ  = io.readIntegrations(project);
     const apiKey = integ.linear?.apiKey;
-    if (!apiKey || !agent.linearLabelName) return "";
+    if (!apiKey) return "";
 
     try {
-      const q = `query($label:String!,$first:Int!){issues(filter:{labels:{some:{name:{eq:$label}}}},first:$first,orderBy:updatedAt){nodes{identifier title description state{name}priority url}}}`;
+      const q = `query($label:String!,$first:Int!){issues(filter:{labels:{some:{name:{eq:$label}}}},first:$first,orderBy:updatedAt){nodes{identifier title state{name}priority url}}}`;
       const result = await io.linearQuery(apiKey, q, { label: agent.linearLabelName, first: 25 });
-      const issues = result.data?.issues?.nodes || [];
+      const issues = (result.data?.issues?.nodes || [])
+        .filter(i => !DONE_STATES.has((i.state?.name || "").toLowerCase()));
       if (!issues.length) return "";
 
       const lines = issues.map(i =>
-        `- [${i.identifier}] ${i.title} (${i.state?.name || "?"})${i.description ? " — " + i.description.slice(0, 120) : ""}\n  ${i.url}`
+        `- [${i.identifier}] ${i.title} | ${i.state?.name || "?"}`
       ).join("\n");
-      log.info("chat:linear", `loaded ${issues.length} issues for agent="${agent.name}" label="${agent.linearLabelName}"`);
+      log.info("chat:linear", `loaded ${issues.length} active issues label="${agent.linearLabelName}"`);
       return `\n\n## Your Current Linear Tasks (label: ${agent.linearLabelName})\n${lines}`;
     } catch (err) {
       log.warn("chat:linear", `failed to fetch tasks for "${agent.name}": ${err.message}`);
@@ -37,8 +75,7 @@ module.exports = function createChatRoutes(ctx) {
     }
   }
 
-  // Fetch all project issues from Linear for orchestrator context.
-  // Returns a formatted string ready to inject into prompts, or "" if not configured.
+  // Fetch all active project issues from Linear (for orchestrators).
   async function fetchAllProjectIssues(project) {
     if (!project?.path) return "";
     const integ  = io.readIntegrations(project);
@@ -47,24 +84,24 @@ module.exports = function createChatRoutes(ctx) {
 
     try {
       const teamId = integ.linear?.defaultTeamId;
-      const vars   = { first: 50 };
+      const vars   = { first: 100 };
       const parts  = ["$first:Int"];
       let   filter = "";
       if (teamId) { parts.push("$teamId:ID"); filter = "filter:{team:{id:{eq:$teamId}}}"; vars.teamId = teamId; }
 
-      const q = `query(${parts.join(",")}){issues(${filter},first:$first,orderBy:updatedAt){nodes{identifier title description state{name}priority assignee{name}labels{nodes{name}}url}}}`;
+      const q = `query(${parts.join(",")}){issues(${filter},first:$first,orderBy:updatedAt){nodes{identifier title state{name}priority assignee{name}labels{nodes{name}}url}}}`;
       const result = await io.linearQuery(apiKey, q, vars);
-      const issues = result.data?.issues?.nodes || [];
+      const issues = (result.data?.issues?.nodes || [])
+        .filter(i => !DONE_STATES.has((i.state?.name || "").toLowerCase()));
       if (!issues.length) return "";
 
       const lines = issues.map(i => {
         const labels   = (i.labels?.nodes || []).map(l => l.name).join(", ");
         const assignee = i.assignee?.name || "unassigned";
-        const desc     = i.description ? ` | desc: ${i.description.slice(0, 120)}` : "";
-        return `[${i.identifier}] ${i.title} | ${i.state?.name || "?"} | assignee: ${assignee}${labels ? ` | labels: ${labels}` : ""}${desc}\n  ${i.url}`;
+        return `[${i.identifier}] ${i.title} | ${i.state?.name || "?"} | assignee: ${assignee}${labels ? ` | labels: ${labels}` : ""}`;
       }).join("\n");
 
-      log.info("chat:linear", `loaded ${issues.length} project issues for orchestrator`);
+      log.info("chat:linear", `loaded ${issues.length} active project issues`);
       return `\n\n## All Linear Issues (${issues.length})\n${lines}`;
     } catch (err) {
       log.warn("chat:linear", `failed to fetch all project issues: ${err.message}`);
@@ -72,8 +109,8 @@ module.exports = function createChatRoutes(ctx) {
     }
   }
 
-  // Parse %%LINEAR_UPDATES%%[...]%%END_LINEAR_UPDATES%% from AI reply and execute updates.
-  // Returns { cleanedReply, summary } — cleanedReply has the block stripped out.
+  // ── Linear update executor ────────────────────────────────────────────────
+
   async function applyLinearUpdates(project, reply) {
     const match = reply.match(/%%LINEAR_UPDATES%%([\s\S]*?)%%END_LINEAR_UPDATES%%/);
     if (!match) return { cleanedReply: reply, summary: null };
@@ -90,7 +127,6 @@ module.exports = function createChatRoutes(ctx) {
     }
     if (!Array.isArray(updates) || !updates.length) return { cleanedReply, summary: null };
 
-    // Resolve all state names → IDs in one request
     const teamId = integ.linear?.defaultTeamId;
     let stateMap = {};
     try {
@@ -136,7 +172,9 @@ module.exports = function createChatRoutes(ctx) {
     return { cleanedReply, summary: `\n\n**Linear updates applied:**\n${results.join("\n")}` };
   }
 
-  async function runOrchestratorChat(res, pid, aid, agent, message, lang, pipeline, modelObj, provider, cfg, linearCtx = "") {
+  // ── Orchestrator chat (agent has pipeline → delegation flow) ──────────────
+
+  async function runOrchestratorChat(res, pid, aid, agent, message, lang, pipeline, modelObj, provider, cfg) {
     const totalTimer = log.timer();
     log.info("chat", `orchestrator start agent="${agent.name}" model=${modelObj.modelId} provider=${provider.type} pid=${pid}`);
 
@@ -154,31 +192,36 @@ module.exports = function createChatRoutes(ctx) {
       const agentMap = {};
       (io.readPAgents()[pid] || []).forEach(a => { agentMap[a.id] = a; });
 
-      const subAgents = pipeline.map(p => agentMap[p.targetAgentId]).filter(Boolean);
+      const allModels    = io.readModels();
+      const allProviders = io.readProviders();
+      const project      = io.readProjects().find(p => p.id === pid);
+      const subAgents    = pipeline.map(p => agentMap[p.targetAgentId]).filter(Boolean);
 
-      // Load conversation history and all Linear issues
-      const project    = io.readProjects().find(p => p.id === pid);
-      const history    = db?.getChatHistory(pid, aid) || [];
-      const allIssues  = subAgents.length ? await fetchAllProjectIssues(project) : "";
-      const fullCtx    = linearCtx + allIssues;
+      const history   = db?.getChatHistory(pid, aid) || [];
+      const allIssues = await fetchAllProjectIssues(project);
 
-      // Format prior conversation for context injection
+      // Format history for context injection
       const historyCtx = history.length
         ? "\n\n## Conversation so far\n" + history.map(m =>
             m.role === "assistant" ? `Assistant: ${m.content}` : `User: ${m.content}`
           ).join("\n\n")
         : "";
 
+      // Build orchestrator system prompt
+      const identity    = loadIdentity(project, aid);
+      const linearFormat = agent.linearEnabled ? buildLinearFormatBlock() : "";
+
       if (!subAgents.length) {
-        log.info("chat", `orchestrator no sub-agents, direct reply`);
-        const sp = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(lang) || ""}${fullCtx}`;
+        // Orchestrator with no sub-agents → direct reply
+        const sp   = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(lang) || ""}${identity}${allIssues}${linearFormat}`;
         const msgs = [...history, { role: "user", content: message }];
-        const t0 = Date.now();
         const reply = await ai.callAIMessages(modelObj, provider, sp, msgs);
+        const { cleanedReply, summary } = await applyLinearUpdates(project, reply);
+        const finalReply = summary ? cleanedReply + summary : cleanedReply;
         db?.appendChatHistory(pid, aid, "user",      message);
-        db?.appendChatHistory(pid, aid, "assistant", reply);
-        db?.chatLog(pid, aid, "direct_reply", agent.name, reply, Date.now() - t0);
-        sse({ type: "reply", text: reply });
+        db?.appendChatHistory(pid, aid, "assistant", finalReply);
+        db?.chatLog(pid, aid, "direct_reply", agent.name, finalReply);
+        sse({ type: "reply", text: finalReply });
         res.end();
         log.info("chat", `orchestrator done (direct) in ${totalTimer()}`);
         return;
@@ -186,24 +229,28 @@ module.exports = function createChatRoutes(ctx) {
 
       const subAgentsList = subAgents.map(a => `- **${a.name}** (id: ${a.id}): ${a.role || a.description || "no role"}`).join("\n");
 
-      const promptFile = path.resolve(__dirname, "../core/prompts/chat-orchestrator.md");
+      const promptFile   = path.resolve(__dirname, "../core/prompts/chat-orchestrator.md");
       const systemPrompt = fs.readFileSync(promptFile, "utf8")
         .replace("{{agent_name}}",      agent.name || aid)
         .replace("{{agent_role}}",      agent.role || agent.description || "General-purpose agent")
         .replace("{{sub_agents_list}}", subAgentsList)
-        .replace("{{lang_directive}}",  ai.langDirective(lang) || "") + fullCtx + historyCtx;
+        .replace("{{lang_directive}}",  ai.langDirective(lang) || "")
+        + identity + linearFormat + allIssues + historyCtx;
 
       sse({ type: "progress", text: "Analyzing request…" });
-      log.info("chat", `orchestrator analyzing (${subAgents.length} sub-agents, ${allIssues ? "Linear data loaded" : "no Linear"})`);
+      log.info("chat", `orchestrator analyzing (${subAgents.length} sub-agents${allIssues ? ", Linear loaded" : ""})`);
 
-      const analyzeTimer = log.timer();
       const orchestratorReply = await ai.callAIMessages(modelObj, provider, systemPrompt, [{ role: "user", content: message }]);
-      log.info("chat", `orchestrator analysis done in ${analyzeTimer()}`);
 
       const delegateMatch = orchestratorReply.match(/<DELEGATE>([\s\S]*?)<\/DELEGATE>/);
       if (!delegateMatch) {
-        db?.chatLog(pid, aid, "direct_reply", agent.name, orchestratorReply);
-        sse({ type: "reply", text: orchestratorReply });
+        // No delegation — orchestrator answered directly
+        const { cleanedReply, summary } = await applyLinearUpdates(project, orchestratorReply);
+        const finalReply = summary ? cleanedReply + summary : cleanedReply;
+        db?.appendChatHistory(pid, aid, "user",      message);
+        db?.appendChatHistory(pid, aid, "assistant", finalReply);
+        db?.chatLog(pid, aid, "direct_reply", agent.name, finalReply);
+        sse({ type: "reply", text: finalReply });
         res.end();
         log.info("chat", `orchestrator done (no delegation) in ${totalTimer()}`);
         return;
@@ -226,36 +273,35 @@ module.exports = function createChatRoutes(ctx) {
         return `${a?.name || d.agentId}: ${d.task}`;
       }).join("\n");
       db?.chatLog(pid, aid, "delegation_plan", agent.name, planSummary);
-      log.info("chat", `orchestrator delegating to ${delegations.length} agents in parallel`);
+      log.info("chat", `orchestrator delegating to ${delegations.length} agent(s) in parallel`);
 
-      // Execute delegations in parallel — each sub-agent gets Linear data in its task context
+      // Run delegations in parallel
       const settled = await Promise.allSettled(
         delegations
           .filter(d => agentMap[d.agentId])
           .map(async d => {
             const subAgent = agentMap[d.agentId];
-            // Include Linear data directly in the task so agent doesn't need to fetch it
-            const taskWithContext = allIssues
-              ? `${d.task}\n\n---\nLinear data (already loaded, do not fetch):\n${allIssues}`
-              : d.task;
-
             sse({ type: "delegate", agentName: subAgent.name, agentId: d.agentId, task: d.task });
-            db?.chatLog(pid, aid, "delegate_task", subAgent.name, taskWithContext);
+            db?.chatLog(pid, aid, "delegate_task", subAgent.name, d.task);
             const delegateStart = Date.now();
             log.info("chat", `delegate → ${subAgent.name} (parallel)`);
 
-            const subModelId  = subAgent.model || cfg.defaultModelId;
-            const subResolved = http.resolveModel(io.readModels(), io.readProviders(), subModelId);
+            const subResolved = resolveSubAgentModel(subAgent, allModels, allProviders, provider.type, cfg.defaultModelId);
             if (!subResolved) {
               db?.chatLog(pid, aid, "delegate_error", subAgent.name, "No model configured");
               sse({ type: "agent_error", agentName: subAgent.name, error: "No model configured" });
               return { agentName: subAgent.name, error: "No model configured" };
             }
 
-            const subSystem = `You are ${subAgent.name}. ${subAgent.role || ""}${ai.langDirective(lang) || ""}`;
-            const subReply  = await ai.callAIMessages(subResolved.model, subResolved.provider, subSystem, [{ role: "user", content: taskWithContext }]);
-            const elapsed   = Date.now() - delegateStart;
-            log.info("chat", `delegate ← ${subAgent.name} in ${elapsed}ms`);
+            const subIdentity = loadIdentity(project, subAgent.id);
+            const subSystem   = `You are ${subAgent.name}. ${subAgent.role || ""}${ai.langDirective(lang) || ""}${subIdentity}`;
+            const subReply    = await ai.callAIMessages(
+              subResolved.model, subResolved.provider, subSystem,
+              [{ role: "user", content: d.task }],
+              { maxTokens: 2048 }
+            );
+            const elapsed = Date.now() - delegateStart;
+            log.info("chat", `delegate ← ${subAgent.name} (${subResolved.model.modelId || subResolved.model.id}) in ${elapsed}ms`);
             db?.chatLog(pid, aid, "delegate_reply", subAgent.name, subReply, elapsed);
             sse({ type: "agent_reply", agentName: subAgent.name, preview: subReply.slice(0, 120) });
             return { agentName: subAgent.name, task: d.task, reply: subReply };
@@ -272,33 +318,39 @@ module.exports = function createChatRoutes(ctx) {
         return { agentName: name, error: s.reason?.message || "Error" };
       });
 
-      // Synthesize
-      sse({ type: "progress", text: "Synthesizing team responses…" });
-      log.info("chat", `orchestrator synthesizing ${results.length} results`);
+      let finalReply;
 
-      const synthContext = results.map(r =>
-        r.error ? `**${r.agentName}** (error): ${r.error}` : `**${r.agentName}**:\n${r.reply}`
-      ).join("\n\n---\n\n");
+      if (delegations.length === 1 && results[0] && !results[0].error) {
+        // Single delegate — skip synthesis, return their reply directly
+        log.info("chat", `orchestrator single-delegate, skipping synthesis`);
+        finalReply = results[0].reply;
+      } else {
+        // Multiple delegates or errors — synthesize
+        sse({ type: "progress", text: "Synthesizing team responses…" });
+        log.info("chat", `orchestrator synthesizing ${results.length} results`);
 
-      const synthSystem  = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(lang) || ""}`;
-      const synthMessage = `Team responses for the request: "${message}"\n\n${synthContext}\n\nProvide a clear, comprehensive answer.`;
+        const synthCtx     = results.map(r =>
+          r.error ? `**${r.agentName}** (error): ${r.error}` : `**${r.agentName}**:\n${r.reply}`
+        ).join("\n\n---\n\n");
+        const synthSystem  = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(lang) || ""}`;
+        const synthMessage = `Team responses for the request: "${message}"\n\n${synthCtx}\n\nProvide a clear, comprehensive answer. If any sub-agent provided Linear update suggestions, include a %%LINEAR_UPDATES%% block.`;
 
-      const synthStart = Date.now();
-      const synthTimer = log.timer();
-      let finalReply = await ai.callAIMessages(modelObj, provider, synthSystem, [{ role: "user", content: synthMessage }]);
-      log.info("chat", `orchestrator synthesis done in ${synthTimer()} | total=${totalTimer()}`);
+        const synthTimer = log.timer();
+        finalReply = await ai.callAIMessages(modelObj, provider, synthSystem, [{ role: "user", content: synthMessage }]);
+        log.info("chat", `orchestrator synthesis done in ${synthTimer()}`);
+      }
 
-      // Execute any Linear status updates embedded by the PM in the reply
       const { cleanedReply, summary } = await applyLinearUpdates(project, finalReply);
       if (summary) finalReply = cleanedReply + summary;
       else finalReply = cleanedReply;
 
       db?.appendChatHistory(pid, aid, "user",      message);
       db?.appendChatHistory(pid, aid, "assistant", finalReply);
-      db?.chatLog(pid, aid, "final_reply", agent.name, finalReply, Date.now() - synthStart);
+      db?.chatLog(pid, aid, "final_reply", agent.name, finalReply);
 
       sse({ type: "reply", text: finalReply });
       res.end();
+      log.info("chat", `orchestrator done in ${totalTimer()}`);
     } catch (err) {
       log.error("chat", `orchestrator error in ${totalTimer()} — ${err.message}`);
       db?.chatLog(pid, aid, "error", agent.name, err.message);
@@ -307,9 +359,11 @@ module.exports = function createChatRoutes(ctx) {
     }
   }
 
+  // ── Route handler ─────────────────────────────────────────────────────────
+
   return async function handle(urlPath, method, req, res, body) {
 
-    // GET /api/projects/:pid/agents/:aid/chat/history — load conversation history
+    // GET /api/projects/:pid/agents/:aid/chat/history
     if (urlPath.match(/^\/api\/projects\/[^/]+\/agents\/[^/]+\/chat\/history$/) && method === "GET") {
       const parts = urlPath.split("/");
       const pid = parts[3], aid = parts[5];
@@ -318,7 +372,7 @@ module.exports = function createChatRoutes(ctx) {
       return true;
     }
 
-    // DELETE /api/projects/:pid/agents/:aid/chat/history — clear conversation history
+    // DELETE /api/projects/:pid/agents/:aid/chat/history
     if (urlPath.match(/^\/api\/projects\/[^/]+\/agents\/[^/]+\/chat\/history$/) && method === "DELETE") {
       const parts = urlPath.split("/");
       const pid = parts[3], aid = parts[5];
@@ -352,7 +406,6 @@ module.exports = function createChatRoutes(ctx) {
       if (!resolved) { http.json(res, 404, { error: `Model '${modelId}' not found or provider not configured` }); return true; }
       const { model: modelObj, provider } = resolved;
 
-      // Skill names + descriptions
       const userSkillsDir = path.join(os.homedir(), ".claude", "skills");
       const skillEntries = (agent.skills || []).map(skillId => {
         if (fs.existsSync(userSkillsDir)) {
@@ -367,7 +420,6 @@ module.exports = function createChatRoutes(ctx) {
       });
       const skillsLine = skillEntries.length ? skillEntries.join(", ") : "None configured";
 
-      // IDENTITY.md excerpt
       const project = io.readProjects().find(p => p.id === pid);
       let identitySection = "";
       if (project?.path) {
@@ -378,18 +430,16 @@ module.exports = function createChatRoutes(ctx) {
         }
       }
 
-      // Model display name
       const modelName     = modelObj.name || modelObj.modelId || modelId;
       const providerLabel = { anthropic: "Anthropic", openai: "OpenAI", google: "Google", mistral: "Mistral", ollama: "Ollama", "claude-cli": "Claude CLI" }[provider.type] || provider.type;
 
-      // Load and fill prompt template
       const promptFile = path.resolve(__dirname, "../core/prompts/chat-intro.md");
       const systemPrompt = fs.readFileSync(promptFile, "utf8")
-        .replace("{{agent_name}}",    agent.name || aid)
-        .replace("{{agent_role}}",    agent.role || agent.description || "General-purpose agent")
-        .replace("{{model_name}}",    modelName)
-        .replace("{{provider_type}}", providerLabel)
-        .replace("{{skills_line}}",   skillsLine)
+        .replace("{{agent_name}}",       agent.name || aid)
+        .replace("{{agent_role}}",       agent.role || agent.description || "General-purpose agent")
+        .replace("{{model_name}}",       modelName)
+        .replace("{{provider_type}}",    providerLabel)
+        .replace("{{skills_line}}",      skillsLine)
         .replace("{{identity_section}}", identitySection)
         .replace("{{lang_directive}}",   ai.langDirective(lang) || "");
 
@@ -421,40 +471,40 @@ module.exports = function createChatRoutes(ctx) {
       if (!resolved) { http.json(res, 404, { error: `Model '${modelId}' not found or provider not configured` }); return true; }
       const { model: modelObj, provider } = resolved;
 
-      const project     = io.readProjects().find(p => p.id === pid);
-      const linearCtx   = await buildLinearContext(project, agent);
-
-      // Orchestrator mode: agent has pipeline entries → delegate via SSE
+      const project  = io.readProjects().find(p => p.id === pid);
       const pipeline = db?.storeGet(pid, aid, "pipeline") || [];
+
+      // Orchestrator mode — agent has pipeline entries → delegation flow via SSE
       if (pipeline.length > 0) {
-        await runOrchestratorChat(res, pid, aid, agent, message.trim(), body.lang, pipeline, modelObj, provider, cfg, linearCtx);
+        await runOrchestratorChat(res, pid, aid, agent, message.trim(), body.lang, pipeline, modelObj, provider, cfg);
         db?.log("chat:message", pid, aid, { role: "user", preview: message.slice(0, 80), mode: "orchestrator" });
         ws?.broadcast("chat:message", { pid, aid, agentName: agent.name, preview: message.slice(0, 80) });
         return true;
       }
 
-      const chatStart = Date.now();
+      // Direct agent chat
       const chatTimer = log.timer();
       log.info("chat", `start agent="${agent.name}" model=${modelObj.modelId} provider=${provider.type} pid=${pid}`);
-
       db?.chatLog(pid, aid, "user_message", agent.name, message.trim());
 
-      const history    = db?.getChatHistory(pid, aid) || [];
-      const messages   = [...history, { role: "user", content: message.trim() }];
-      const systemPrompt = `You are ${agent.name}. ${agent.role}${ai.langDirective(body.lang)}${linearCtx}`;
+      const identity     = loadIdentity(project, aid);
+      const linearCtx    = await buildLinearContext(project, agent);
+      const linearFormat = agent.linearEnabled ? buildLinearFormatBlock() : "";
+      const history      = db?.getChatHistory(pid, aid) || [];
+      const systemPrompt = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(body.lang)}${identity}${linearCtx}${linearFormat}`;
+      const messages     = [...history, { role: "user", content: message.trim() }];
+
       try {
         let reply = await ai.callAIMessages(modelObj, provider, systemPrompt, messages);
-        const elapsed = Date.now() - chatStart;
         log.info("chat", `done agent="${agent.name}" in ${chatTimer()} history=${history.length}msgs`);
 
-        // Execute any Linear status updates embedded in the reply
         const { cleanedReply, summary } = await applyLinearUpdates(project, reply);
         if (summary) reply = cleanedReply + summary;
         else reply = cleanedReply;
 
         db?.appendChatHistory(pid, aid, "user",      message.trim());
         db?.appendChatHistory(pid, aid, "assistant", reply);
-        db?.chatLog(pid, aid, "direct_reply", agent.name, reply, elapsed);
+        db?.chatLog(pid, aid, "direct_reply", agent.name, reply);
         db?.log("chat:message", pid, aid, { role: "user", preview: message.slice(0, 80) });
         ws?.broadcast("chat:message", { pid, aid, agentName: agent.name, preview: message.slice(0, 80) });
         http.json(res, 200, { reply });
