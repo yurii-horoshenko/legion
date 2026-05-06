@@ -147,6 +147,7 @@ async function cmdAsk(args) {
 
   const project  = io.readProjects().find(p => p.id === pid);
   const agentMap = Object.fromEntries((agentsMap[pid] || []).map(a => [a.id, a]));
+  let _allLinearCtxCache = null;
 
   // ── Build full system prompt (mirrors routes/chat.js logic) ───────────────
   async function buildSystemPrompt() {
@@ -170,7 +171,7 @@ async function cmdAsk(args) {
     // Orchestrators (agents with a pipeline) see all project issues, not just their label
     const pipeline = db.storeGet(pid, agent.id, "pipeline") || [];
     const linearCtx = pipeline.length > 0
-      ? await buildAllLinearCtx()
+      ? await getOrBuildAllLinearCtx()
       : await buildLinearCtx();
     const subAgentCtx = buildSubAgentCtx();
 
@@ -189,7 +190,8 @@ ${identity}${linearCtx}${subAgentCtx}`;
     try {
       const q = `query($label:String!,$first:Int!){issues(filter:{labels:{some:{name:{eq:$label}}}},first:$first,orderBy:updatedAt){nodes{id identifier title description state{name}priority url}}}`;
       const r = await io.linearQuery(apiKey, q, { label: agent.linearLabelName, first: 50 });
-      const issues = r.data?.issues?.nodes || [];
+      const DONE = new Set(["done", "cancelled", "duplicate"]);
+      const issues = (r.data?.issues?.nodes || []).filter(i => !DONE.has((i.state?.name || "").toLowerCase()));
       if (!issues.length) return "";
       const lines = issues.map(i =>
         `- [${i.identifier}] ${i.title} | ${i.state?.name || "?"}`
@@ -216,16 +218,23 @@ ${identity}${linearCtx}${subAgentCtx}`;
       if (teamId) { parts.push("$teamId:ID"); filter = "filter:{team:{id:{eq:$teamId}}}"; vars.teamId = teamId; }
       const q = `query(${parts.join(",")}){issues(${filter},first:$first,orderBy:updatedAt){nodes{id identifier title description state{name}priority assignee{name}labels{nodes{name}}url}}}`;
       const r = await io.linearQuery(apiKey, q, vars);
-      const issues = r.data?.issues?.nodes || [];
+      const DONE = new Set(["done", "cancelled", "duplicate"]);
+      const issues = (r.data?.issues?.nodes || []).filter(i => !DONE.has((i.state?.name || "").toLowerCase()));
       if (!issues.length) return "";
       const lines = issues.map(i => {
         const labels   = (i.labels?.nodes || []).map(l => l.name).join(", ");
         const assignee = i.assignee?.name || "unassigned";
         return `[${i.identifier}] ${i.title} | ${i.state?.name || "?"} | assignee: ${assignee}${labels ? ` | labels: ${labels}` : ""}`;
       }).join("\n");
-      process.stderr.write(`  ✓ Loaded ${issues.length} Linear issues (all project)\n`);
+      process.stderr.write(`  ✓ Loaded ${issues.length} Linear issues (active)\n`);
       return `\n\n## All Linear Issues (${issues.length})\n${lines}`;
     } catch { return ""; }
+  }
+
+  async function getOrBuildAllLinearCtx() {
+    if (_allLinearCtxCache !== null) return _allLinearCtxCache;
+    _allLinearCtxCache = await buildAllLinearCtx();
+    return _allLinearCtxCache;
   }
 
   // ── Pipeline sub-agents list for orchestrator ──────────────────────────────
@@ -306,25 +315,43 @@ ${identity}${linearCtx}${subAgentCtx}`;
   }
 
   // ── Execute DELEGATE block — call sub-agents, return structured results ──────
-  async function runDelegations(delegations, allLinearCtx) {
+  async function runDelegations(delegations) {
+    const allModels    = db.readModels();
+    const allProviders = db.readProviders();
     const settled = await Promise.allSettled(delegations.map(async d => {
       const sub = agentMap[d.agentId];
       if (!sub) return { agentName: d.agentId, error: "agent not found" };
-      const subModelId = sub.model || cfg.defaultModelId;
-      const subRes = httpLib.resolveModel(db.readModels(), db.readProviders(), subModelId);
-      if (!subRes) return { agentName: sub.name, error: "no model configured" };
+
+      // Prefer haiku from same provider type for speed; fall back to sub's model or default
+      const subRes = (() => {
+        if (sub.model) {
+          const r = httpLib.resolveModel(allModels, allProviders, sub.model);
+          if (r) return r;
+        }
+        const haiku = allModels.find(m =>
+          (m.modelId || "").toLowerCase().includes("haiku") &&
+          allProviders.find(p => p.id === m.providerId)?.type === provider.type
+        );
+        if (haiku) {
+          const r = httpLib.resolveModel(allModels, allProviders, haiku.id);
+          if (r) return r;
+        }
+        return httpLib.resolveModel(allModels, allProviders, cfg.defaultModelId);
+      })();
+      if (!subRes) return { agentName: sub.name || d.agentId, error: "no model configured" };
       const { model: subModel, provider: subProv } = subRes;
 
-      process.stderr.write(`  → ${sub.name}…\n`);
+      process.stderr.write(`  → ${sub.name} (${subModel.modelId || subModel.id})…\n`);
 
       let subIdentity = "";
       if (project?.path) {
         const iFile = path.join(project.path, ".legion", "agents", sub.id, "IDENTITY.md");
         if (fs.existsSync(iFile)) subIdentity = "\n\n## Identity\n\n" + fs.readFileSync(iFile, "utf8");
       }
-      const subSp   = `You are ${sub.name}. ${sub.role || ""}${subIdentity}${allLinearCtx}`;
-      const task    = d.task || d.prompt || "";
-      const subReply = await ai.callAIMessages(subModel, subProv, subSp, [{ role: "user", content: task }]);
+      // Subagents receive focused tasks — no full Linear context needed
+      const subSp    = `You are ${sub.name}. ${sub.role || ""}${subIdentity}`;
+      const task     = d.task || d.prompt || "";
+      const subReply = await ai.callAIMessages(subModel, subProv, subSp, [{ role: "user", content: task }], { maxTokens: 2048 });
       return { agentName: sub.name, task, reply: subReply };
     }));
 
@@ -344,17 +371,21 @@ ${identity}${linearCtx}${subAgentCtx}`;
       try { delegations = JSON.parse(delMatch[1].trim()).tasks || []; } catch {}
       if (delegations.length) {
         process.stderr.write(`\n  Delegating to ${delegations.length} agent(s)…\n`);
-        const allLinearCtx = await buildAllLinearCtx();
-        const results = await runDelegations(delegations, allLinearCtx);
+        const results = await runDelegations(delegations);
 
-        // Synthesis step — PM aggregates sub-agent results
-        process.stderr.write(`  Synthesizing…\n`);
-        const synthCtx = results.map(r =>
-          r.error ? `**${r.agentName}** (error): ${r.error}` : `**${r.agentName}**:\n${r.reply}`
-        ).join("\n\n---\n\n");
-        const synthSp  = `You are ${agent.name}. ${agent.role || ""}`;
-        const synthMsg = `Team responses for: "${userMessage || "the request"}"\n\n${synthCtx}\n\nProvide a clear, comprehensive final answer. If any sub-agent provided Linear update suggestions, include a %%LINEAR_UPDATES%% block.`;
-        reply = await ai.callAIMessages(modelObj, provider, synthSp, [{ role: "user", content: synthMsg }]);
+        if (delegations.length === 1 && results[0] && !results[0].error) {
+          // Single delegate — skip synthesis, return reply directly
+          reply = results[0].reply;
+        } else {
+          // Multiple delegates or errors — synthesize
+          process.stderr.write(`  Synthesizing…\n`);
+          const synthCtx = results.map(r =>
+            r.error ? `**${r.agentName}** (error): ${r.error}` : `**${r.agentName}**:\n${r.reply}`
+          ).join("\n\n---\n\n");
+          const synthSp  = `You are ${agent.name}. ${agent.role || ""}`;
+          const synthMsg = `Team responses for: "${userMessage || "the request"}"\n\n${synthCtx}\n\nProvide a clear, comprehensive final answer. If any sub-agent provided Linear update suggestions, include a %%LINEAR_UPDATES%% block.`;
+          reply = await ai.callAIMessages(modelObj, provider, synthSp, [{ role: "user", content: synthMsg }]);
+        }
       }
     }
 
