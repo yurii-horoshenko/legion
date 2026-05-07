@@ -26,10 +26,59 @@ module.exports = function createChatRoutes(ctx) {
     } catch { return ""; }
   }
 
-  // File access instructions — injected when agent has allowedTools configured.
-  function buildFileAccessBlock(allowedTools) {
-    if (!allowedTools) return "";
-    return `\n\n## File System Access\nYou have read-only access to project files via these tools: **Read** (read file contents), **LS** (list directory), **Glob** (find files by pattern), **Grep** (search in files). Use them to analyse the codebase when your task requires it.`;
+  // Default tools granted to all agents inside a pipeline execution.
+  const PIPELINE_TOOLS = "Read,Write,Edit,LS,Glob,Grep";
+
+  // File access instructions with project path — always injected for pipeline agents.
+  function buildFileAccessBlock(allowedTools, projectPath) {
+    const root = projectPath ? `\nProject root: **${projectPath}** — use absolute paths when reading or writing project files.` : "";
+    return `\n\n## File System Access\nYou have full read-write access via: **Read** (read file), **Write** (create/overwrite), **Edit** (modify sections), **LS** (list directory), **Glob** (find files), **Grep** (search in files).${root} Always read the task document first, then read relevant source files before making changes.`;
+  }
+
+  // ── Task file helpers ─────────────────────────────────────────────────────
+
+  function createTaskFile(project, message, allIssues) {
+    if (!project?.path) return null;
+    try {
+      const taskDir = path.join(project.path, ".legion", "tasks");
+      fs.mkdirSync(taskDir, { recursive: true });
+      const filePath = path.join(taskDir, `task-${Date.now()}.md`);
+      const content = [
+        `# Task`,
+        `**Created:** ${new Date().toISOString()}`,
+        ``,
+        `## Request`,
+        ``,
+        message,
+        allIssues ? `\n## Linear Context\n${allIssues}` : "",
+      ].join("\n");
+      fs.writeFileSync(filePath, content, "utf8");
+      log.info("chat", `task file created: ${filePath}`);
+      return filePath;
+    } catch (err) {
+      log.warn("chat", `failed to create task file: ${err.message}`);
+      return null;
+    }
+  }
+
+  function appendTaskFile(filePath, agentName, content) {
+    if (!filePath) return;
+    try {
+      fs.appendFileSync(filePath, `\n\n## ${agentName}\n\n${content}`, "utf8");
+    } catch (err) {
+      log.warn("chat", `failed to append to task file: ${err.message}`);
+    }
+  }
+
+  function readTaskFile(filePath) {
+    if (!filePath) return "";
+    try { return fs.readFileSync(filePath, "utf8"); } catch { return ""; }
+  }
+
+  function deleteTaskFile(filePath) {
+    if (!filePath) return;
+    try { fs.unlinkSync(filePath); log.info("chat", `task file deleted: ${filePath}`); }
+    catch (err) { log.warn("chat", `failed to delete task file: ${err.message}`); }
   }
 
   // Generic Linear actions format block — injected when agent.linearEnabled is true.
@@ -73,15 +122,16 @@ module.exports = function createChatRoutes(ctx) {
     if (!apiKey) return "";
 
     try {
-      const q = `query($label:String!,$first:Int!){issues(filter:{labels:{some:{name:{eq:$label}}}},first:$first,orderBy:updatedAt){nodes{identifier title state{name}priority url}}}`;
+      const q = `query($label:String!,$first:Int!){issues(filter:{labels:{some:{name:{eq:$label}}}},first:$first,orderBy:updatedAt){nodes{identifier title description state{name}priority url}}}`;
       const result = await io.linearQuery(apiKey, q, { label: agent.linearLabelName, first: 25 });
       const issues = (result.data?.issues?.nodes || [])
         .filter(i => !DONE_STATES.has((i.state?.name || "").toLowerCase()));
       if (!issues.length) return "";
 
-      const lines = issues.map(i =>
-        `- [${i.identifier}] ${i.title} | ${i.state?.name || "?"}`
-      ).join("\n");
+      const lines = issues.map(i => {
+        const desc = i.description ? `\n  ${i.description.slice(0, 300).replace(/\n/g, " ")}` : "";
+        return `- [${i.identifier}] ${i.title} | ${i.state?.name || "?"}${desc}`;
+      }).join("\n");
       log.info("chat:linear", `loaded ${issues.length} active issues label="${agent.linearLabelName}"`);
       return `\n\n## Your Current Linear Tasks (label: ${agent.linearLabelName})\n${lines}`;
     } catch (err) {
@@ -104,7 +154,7 @@ module.exports = function createChatRoutes(ctx) {
       let   filter = "";
       if (teamId) { parts.push("$teamId:ID"); filter = "filter:{team:{id:{eq:$teamId}}}"; vars.teamId = teamId; }
 
-      const q = `query(${parts.join(",")}){issues(${filter},first:$first,orderBy:updatedAt){nodes{identifier title state{name}priority assignee{name}labels{nodes{name}}url}}}`;
+      const q = `query(${parts.join(",")}){issues(${filter},first:$first,orderBy:updatedAt){nodes{identifier title description state{name}priority assignee{name}labels{nodes{name}}url}}}`;
       const result = await io.linearQuery(apiKey, q, vars);
       const issues = (result.data?.issues?.nodes || [])
         .filter(i => !DONE_STATES.has((i.state?.name || "").toLowerCase()));
@@ -113,13 +163,61 @@ module.exports = function createChatRoutes(ctx) {
       const lines = issues.map(i => {
         const labels   = (i.labels?.nodes || []).map(l => l.name).join(", ");
         const assignee = i.assignee?.name || "unassigned";
-        return `[${i.identifier}] ${i.title} | ${i.state?.name || "?"} | assignee: ${assignee}${labels ? ` | labels: ${labels}` : ""}`;
+        const desc     = i.description ? `\n  ${i.description.slice(0, 400).replace(/\n/g, " ")}` : "";
+        return `[${i.identifier}] ${i.title} | ${i.state?.name || "?"} | assignee: ${assignee}${labels ? ` | labels: ${labels}` : ""}${desc}`;
       }).join("\n");
 
       log.info("chat:linear", `loaded ${issues.length} active project issues`);
       return `\n\n## All Linear Issues (${issues.length})\n${lines}`;
     } catch (err) {
       log.warn("chat:linear", `failed to fetch all project issues: ${err.message}`);
+      return "";
+    }
+  }
+
+  // Fetch full detail for a specific issue: description + comments + sub-tasks.
+  async function fetchIssueDetail(project, identifier) {
+    if (!project?.path || !identifier) return "";
+    const integ  = io.readIntegrations(project);
+    const apiKey = integ.linear?.apiKey;
+    if (!apiKey) return "";
+
+    try {
+      const q = `{issue(id:"${identifier}"){identifier title description state{name}priority assignee{name}labels{nodes{name}}url updatedAt comments(first:25,orderBy:createdAt){nodes{body user{name}createdAt}}children{nodes{identifier title description state{name}}}}}`;
+      const result = await io.linearQuery(apiKey, q);
+      const issue  = result.data?.issue;
+      if (!issue) return "";
+
+      const labels   = (issue.labels?.nodes || []).map(l => l.name).join(", ");
+      const comments = (issue.comments?.nodes || []);
+      const children = (issue.children?.nodes || []);
+
+      const lines = [
+        `### ${issue.identifier}: ${issue.title}`,
+        `**State:** ${issue.state?.name || "?"} | **Priority:** ${issue.priority ?? "?"} | **Assignee:** ${issue.assignee?.name || "unassigned"}${labels ? ` | **Labels:** ${labels}` : ""}`,
+        `**URL:** ${issue.url}`,
+        "",
+        "#### Description",
+        issue.description || "(no description)",
+      ];
+
+      if (comments.length) {
+        lines.push("", "#### Comments");
+        comments.forEach(c => lines.push(`\n**${c.user?.name || "?"}:** ${c.body}`));
+      }
+
+      if (children.length) {
+        lines.push("", "#### Sub-tasks");
+        children.forEach(c => {
+          lines.push(`- [${c.identifier}] ${c.title} | ${c.state?.name || "?"}`);
+          if (c.description) lines.push(`  ${c.description.slice(0, 200).replace(/\n/g, " ")}`);
+        });
+      }
+
+      log.info("chat:linear", `loaded full detail for ${identifier}`);
+      return lines.join("\n");
+    } catch (err) {
+      log.warn("chat:linear", `failed to fetch issue detail "${identifier}": ${err.message}`);
       return "";
     }
   }
@@ -265,7 +363,165 @@ module.exports = function createChatRoutes(ctx) {
     return { cleanedReply: cre.cleanedReply, summary };
   }
 
-  // ── Orchestrator chat (agent has pipeline → delegation flow) ──────────────
+  // ── Orchestrator core (recursive, returns reply string) ─────────────────
+
+  // Calls a single agent: if it has its own pipeline, runs it as a nested
+  // orchestrator; otherwise calls it directly. Returns { agentName, task, reply }
+  // or { agentName, error }. depth prevents infinite loops.
+  async function callAgent(sse, pid, orchestratorAid, subAgent, task, lang, allModels, allProviders, project, agentMap, cfg, parentProviderType, depth, allIssues, taskFile) {
+    const subResolved = resolveSubAgentModel(subAgent, allModels, allProviders, parentProviderType, cfg.defaultModelId);
+    if (!subResolved) return { agentName: subAgent.name, error: "No model configured" };
+
+    const subPipeline = db?.storeGet(pid, subAgent.id, "pipeline") || [];
+
+    let reply;
+    if (subPipeline.length > 0 && depth < 5) {
+      log.info("chat", `delegate → ${subAgent.name} (orchestrator chain, depth=${depth + 1})`);
+      reply = await runOrchestratorCore(
+        sse, pid, subAgent, task, lang, subPipeline,
+        subResolved.model, subResolved.provider,
+        allModels, allProviders, project, agentMap, cfg,
+        "", depth + 1, allIssues, taskFile
+      );
+    } else {
+      log.info("chat", `delegate → ${subAgent.name} (leaf)`);
+      const subIdentity   = loadIdentity(project, subAgent.id);
+      const subFileAccess = buildFileAccessBlock(subAgent.allowedTools, project?.path);
+      const subSystem     = `You are ${subAgent.name}. ${subAgent.role || ""}${ai.langDirective(lang) || ""}${subIdentity}${subFileAccess}`;
+      // Inject current task file content so sub-agents work from file, not from Linear
+      const taskCtx = taskFile
+        ? `\n\n## Task Document (${taskFile})\n\n${readTaskFile(taskFile)}`
+        : "";
+      reply = await ai.callAIMessages(
+        subResolved.model, subResolved.provider, subSystem,
+        [{ role: "user", content: task + taskCtx }],
+        { maxTokens: 2048, allowedTools: subAgent.allowedTools || PIPELINE_TOOLS }
+      );
+    }
+
+    return { agentName: subAgent.name, task, reply };
+  }
+
+  // Core orchestrator logic. Returns the final reply string.
+  // historyCtx is only non-empty at the top level (conversation continuity).
+  // allIssues is fetched once at depth=0 and passed down to avoid repeat API calls.
+  // depth prevents infinite pipeline loops.
+  async function runOrchestratorCore(sse, pid, agent, message, lang, pipeline, modelObj, provider, allModels, allProviders, project, agentMap, cfg, historyCtx, depth, allIssues, taskFile) {
+    const aid       = agent.id;
+    const subAgents = pipeline.map(p => agentMap[p.targetAgentId]).filter(Boolean);
+    if (allIssues === undefined) allIssues = await fetchAllProjectIssues(project);
+    const identity  = loadIdentity(project, aid);
+    const linearFormat = agent.linearEnabled ? buildLinearFormatBlock() : "";
+
+    if (!subAgents.length) {
+      const fileAccess = buildFileAccessBlock(agent.allowedTools, project?.path);
+      const sp   = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(lang) || ""}${identity}${allIssues}${linearFormat}${fileAccess}${historyCtx}`;
+      const msgs = historyCtx ? [{ role: "user", content: message }] : [{ role: "user", content: message }];
+      return await ai.callAIMessages(modelObj, provider, sp, msgs, { allowedTools: agent.allowedTools || "" });
+    }
+
+    const subAgentsList = subAgents.map(a => `- **${a.name}** (id: ${a.id}): ${a.role || a.description || "no role"}`).join("\n");
+    const fileAccess    = buildFileAccessBlock(agent.allowedTools, project?.path);
+    const promptFile    = path.resolve(__dirname, "../core/prompts/chat-orchestrator.md");
+    const systemPrompt  = fs.readFileSync(promptFile, "utf8")
+      .replace("{{agent_name}}",      agent.name || aid)
+      .replace("{{agent_role}}",      agent.role || agent.description || "General-purpose agent")
+      .replace("{{sub_agents_list}}", subAgentsList)
+      .replace("{{lang_directive}}",  ai.langDirective(lang) || "")
+      + identity + linearFormat + fileAccess + allIssues + historyCtx;
+
+    sse({ type: "progress", text: depth === 0 ? "Analyzing request…" : `${agent.name} analyzing…` });
+    log.info("chat", `orchestrator ${agent.name} analyzing (${subAgents.length} sub-agents, depth=${depth})`);
+
+    const orchestratorReply = await ai.callAIMessages(modelObj, provider, systemPrompt, [{ role: "user", content: message }], { allowedTools: agent.allowedTools || PIPELINE_TOOLS });
+
+    const delegateMatch = orchestratorReply.match(/<DELEGATE>([\s\S]*?)<\/DELEGATE>/);
+    if (!delegateMatch) {
+      db?.chatLog(pid, aid, "direct_reply", agent.name, orchestratorReply);
+      return orchestratorReply;
+    }
+
+    let delegations = [];
+    try {
+      delegations = JSON.parse(delegateMatch[1].trim()).tasks || [];
+    } catch {
+      return orchestratorReply.replace(/<DELEGATE>[\s\S]*?<\/DELEGATE>/, "").trim() || orchestratorReply;
+    }
+
+    const planSummary = delegations.map(d => `${agentMap[d.agentId]?.name || d.agentId}: ${d.task}`).join("\n");
+    db?.chatLog(pid, aid, "delegation_plan", agent.name, planSummary);
+    log.info("chat", `${agent.name} delegating to ${delegations.length} agent(s)`);
+
+    const settled = await Promise.allSettled(
+      delegations
+        .filter(d => agentMap[d.agentId])
+        .map(async d => {
+          const subAgent = agentMap[d.agentId];
+          sse({ type: "delegate", agentName: subAgent.name, agentId: d.agentId, task: d.task });
+          db?.chatLog(pid, aid, "delegate_task", subAgent.name, d.task);
+          const delegateStart = Date.now();
+
+          const result = await callAgent(sse, pid, aid, subAgent, d.task, lang, allModels, allProviders, project, agentMap, cfg, provider.type, depth, allIssues, taskFile);
+
+          if (result.error) {
+            db?.chatLog(pid, aid, "delegate_error", subAgent.name, result.error);
+            sse({ type: "agent_error", agentName: subAgent.name, error: result.error });
+            return result;
+          }
+
+          const elapsed = Date.now() - delegateStart;
+          log.info("chat", `delegate ← ${subAgent.name} in ${elapsed}ms`);
+          db?.chatLog(pid, aid, "delegate_reply", subAgent.name, result.reply, elapsed);
+          sse({ type: "agent_reply", agentName: subAgent.name, preview: result.reply.slice(0, 120) });
+          return result;
+        })
+    );
+
+    const results = settled.map((s, i) => {
+      if (s.status === "fulfilled") return s.value;
+      const subAgent = agentMap[delegations[i]?.agentId];
+      const name = subAgent?.name || delegations[i]?.agentId || "unknown";
+      log.error("chat", `delegate ✗ ${name} — ${s.reason?.message}`);
+      db?.chatLog(pid, aid, "delegate_error", name, s.reason?.message || "Unknown error");
+      sse({ type: "agent_error", agentName: name, error: s.reason?.message || "Error" });
+      return { agentName: name, error: s.reason?.message || "Error" };
+    });
+
+    // Append each agent's response to the task file (builds audit trail)
+    results.forEach(r => { if (r.reply) appendTaskFile(taskFile, r.agentName, r.reply); });
+
+    // Always synthesize when Linear enabled — sub-agents don't handle Linear blocks.
+    const needsSynthesis = agent.linearEnabled || delegations.length !== 1 || !results[0] || results[0].error;
+
+    if (!needsSynthesis) {
+      log.info("chat", `${agent.name} single-delegate, skipping synthesis`);
+      return results[0].reply;
+    }
+
+    sse({ type: "progress", text: depth === 0 ? "Synthesizing team responses…" : `${agent.name} synthesizing…` });
+    log.info("chat", `${agent.name} synthesizing ${results.length} results`);
+
+    // PM synthesis reads the accumulated task file instead of raw LLM-to-LLM context
+    const taskFileContent = readTaskFile(taskFile);
+    const synthCtx = taskFileContent
+      ? `Task document (full history):\n\n${taskFileContent}`
+      : results.map(r =>
+          r.error ? `**${r.agentName}** (error): ${r.error}` : `**${r.agentName}**:\n${r.reply}`
+        ).join("\n\n---\n\n");
+
+    const synthSystem = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(lang) || ""}${depth === 0 ? allIssues : ""}${linearFormat}`;
+    const linearInstruction = agent.linearEnabled
+      ? `\n\nBased on the user's original request and the team's response, decide if any Linear tasks need to be created or updated, and include the appropriate %%LINEAR_UPDATES%% or %%LINEAR_CREATE%% blocks at the END of your response.`
+      : "";
+    const synthMessage = `Original user request: "${message}"\n\nTeam responses:\n\n${synthCtx}\n\nProvide a clear, comprehensive answer that combines the team's work.${linearInstruction}`;
+
+    const synthTimer = log.timer();
+    const synthReply = await ai.callAIMessages(modelObj, provider, synthSystem, [{ role: "user", content: synthMessage }]);
+    log.info("chat", `${agent.name} synthesis done in ${synthTimer()}`);
+    return synthReply;
+  }
+
+  // ── Orchestrator chat (SSE wrapper around runOrchestratorCore) ────────────
 
   async function runOrchestratorChat(res, pid, aid, agent, message, lang, pipeline, modelObj, provider, cfg) {
     const totalTimer = log.timer();
@@ -288,172 +544,47 @@ module.exports = function createChatRoutes(ctx) {
       const allModels    = io.readModels();
       const allProviders = io.readProviders();
       const project      = io.readProjects().find(p => p.id === pid);
-      const subAgents    = pipeline.map(p => agentMap[p.targetAgentId]).filter(Boolean);
 
-      const history   = db?.getChatHistory(pid, aid) || [];
-      const allIssues = await fetchAllProjectIssues(project);
-
-      // Format history for context injection
+      const history = db?.getChatHistory(pid, aid) || [];
       const historyCtx = history.length
         ? "\n\n## Conversation so far\n" + history.map(m =>
             m.role === "assistant" ? `Assistant: ${m.content}` : `User: ${m.content}`
           ).join("\n\n")
         : "";
 
-      // Build orchestrator system prompt
-      const identity     = loadIdentity(project, aid);
-      const linearFormat = agent.linearEnabled ? buildLinearFormatBlock() : "";
+      // Fetch once at top level — sub-orchestrators receive allIssues, not re-fetch.
+      const allIssues = await fetchAllProjectIssues(project);
 
-      if (!subAgents.length) {
-        // Orchestrator with no sub-agents → direct reply
-        const fileAccess = buildFileAccessBlock(agent.allowedTools);
-        const sp   = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(lang) || ""}${identity}${allIssues}${linearFormat}${fileAccess}`;
-        const msgs = [...history, { role: "user", content: message }];
-        const reply = await ai.callAIMessages(modelObj, provider, sp, msgs, { allowedTools: agent.allowedTools || "" });
-        const { cleanedReply, summary } = await applyLinearActions(project, reply);
-        const finalReply = summary ? cleanedReply + summary : cleanedReply;
-        db?.appendChatHistory(pid, aid, "user",      message);
-        db?.appendChatHistory(pid, aid, "assistant", finalReply);
-        db?.chatLog(pid, aid, "direct_reply", agent.name, finalReply);
-        sse({ type: "reply", text: finalReply });
-        res.end();
-        log.info("chat", `orchestrator done (direct) in ${totalTimer()}`);
-        return;
-      }
+      // Deep-fetch any specific issue IDs mentioned in the message (e.g. VIS-154).
+      const mentionedIds = [...new Set((message.match(/\b[A-Z][A-Z0-9]+-\d+\b/g) || []))];
+      const detailParts  = (await Promise.all(mentionedIds.map(id => fetchIssueDetail(project, id)))).filter(Boolean);
+      const issueDetails = detailParts.length ? `\n\n## Issue Details\n\n${detailParts.join("\n\n---\n\n")}` : "";
 
-      const subAgentsList = subAgents.map(a => `- **${a.name}** (id: ${a.id}): ${a.role || a.description || "no role"}`).join("\n");
-
-      const fileAccess   = buildFileAccessBlock(agent.allowedTools);
-      const promptFile   = path.resolve(__dirname, "../core/prompts/chat-orchestrator.md");
-      const systemPrompt = fs.readFileSync(promptFile, "utf8")
-        .replace("{{agent_name}}",      agent.name || aid)
-        .replace("{{agent_role}}",      agent.role || agent.description || "General-purpose agent")
-        .replace("{{sub_agents_list}}", subAgentsList)
-        .replace("{{lang_directive}}",  ai.langDirective(lang) || "")
-        + identity + linearFormat + fileAccess + allIssues + historyCtx;
-
-      sse({ type: "progress", text: "Analyzing request…" });
-      log.info("chat", `orchestrator analyzing (${subAgents.length} sub-agents${allIssues ? ", Linear loaded" : ""})`);
-
-      const orchestratorReply = await ai.callAIMessages(modelObj, provider, systemPrompt, [{ role: "user", content: message }], { allowedTools: agent.allowedTools || "" });
-
-      const delegateMatch = orchestratorReply.match(/<DELEGATE>([\s\S]*?)<\/DELEGATE>/);
-      if (!delegateMatch) {
-        // No delegation — orchestrator answered directly
-        const { cleanedReply, summary } = await applyLinearActions(project, orchestratorReply);
-        const finalReply = summary ? cleanedReply + summary : cleanedReply;
-        db?.appendChatHistory(pid, aid, "user",      message);
-        db?.appendChatHistory(pid, aid, "assistant", finalReply);
-        db?.chatLog(pid, aid, "direct_reply", agent.name, finalReply);
-        sse({ type: "reply", text: finalReply });
-        res.end();
-        log.info("chat", `orchestrator done (no delegation) in ${totalTimer()}`);
-        return;
-      }
-
-      let delegations = [];
-      try {
-        delegations = JSON.parse(delegateMatch[1].trim()).tasks || [];
-      } catch {
-        const direct = orchestratorReply.replace(/<DELEGATE>[\s\S]*?<\/DELEGATE>/, "").trim();
-        db?.chatLog(pid, aid, "direct_reply", agent.name, direct || orchestratorReply);
-        sse({ type: "reply", text: direct || orchestratorReply });
-        res.end();
-        log.info("chat", `orchestrator done (parse error fallback) in ${totalTimer()}`);
-        return;
-      }
-
-      const planSummary = delegations.map(d => {
-        const a = agentMap[d.agentId];
-        return `${a?.name || d.agentId}: ${d.task}`;
-      }).join("\n");
-      db?.chatLog(pid, aid, "delegation_plan", agent.name, planSummary);
-      log.info("chat", `orchestrator delegating to ${delegations.length} agent(s) in parallel`);
-
-      // Run delegations in parallel
-      const settled = await Promise.allSettled(
-        delegations
-          .filter(d => agentMap[d.agentId])
-          .map(async d => {
-            const subAgent = agentMap[d.agentId];
-            sse({ type: "delegate", agentName: subAgent.name, agentId: d.agentId, task: d.task });
-            db?.chatLog(pid, aid, "delegate_task", subAgent.name, d.task);
-            const delegateStart = Date.now();
-            log.info("chat", `delegate → ${subAgent.name} (parallel)`);
-
-            const subResolved = resolveSubAgentModel(subAgent, allModels, allProviders, provider.type, cfg.defaultModelId);
-            if (!subResolved) {
-              db?.chatLog(pid, aid, "delegate_error", subAgent.name, "No model configured");
-              sse({ type: "agent_error", agentName: subAgent.name, error: "No model configured" });
-              return { agentName: subAgent.name, error: "No model configured" };
-            }
-
-            const subIdentity   = loadIdentity(project, subAgent.id);
-            const subFileAccess = buildFileAccessBlock(subAgent.allowedTools);
-            const subSystem     = `You are ${subAgent.name}. ${subAgent.role || ""}${ai.langDirective(lang) || ""}${subIdentity}${subFileAccess}`;
-            const subReply      = await ai.callAIMessages(
-              subResolved.model, subResolved.provider, subSystem,
-              [{ role: "user", content: d.task }],
-              { maxTokens: 2048, allowedTools: subAgent.allowedTools || "" }
-            );
-            const elapsed = Date.now() - delegateStart;
-            log.info("chat", `delegate ← ${subAgent.name} (${subResolved.model.modelId || subResolved.model.id}) in ${elapsed}ms`);
-            db?.chatLog(pid, aid, "delegate_reply", subAgent.name, subReply, elapsed);
-            sse({ type: "agent_reply", agentName: subAgent.name, preview: subReply.slice(0, 120) });
-            return { agentName: subAgent.name, task: d.task, reply: subReply };
-          })
-      );
-
-      const results = settled.map((s, i) => {
-        if (s.status === "fulfilled") return s.value;
-        const subAgent = agentMap[delegations[i]?.agentId];
-        const name = subAgent?.name || delegations[i]?.agentId || "unknown";
-        log.error("chat", `delegate ✗ ${name} — ${s.reason?.message}`);
-        db?.chatLog(pid, aid, "delegate_error", name, s.reason?.message || "Unknown error");
-        sse({ type: "agent_error", agentName: name, error: s.reason?.message || "Error" });
-        return { agentName: name, error: s.reason?.message || "Error" };
-      });
+      // Create task file: PM loads full context once, all sub-agents read from it.
+      const taskFile = createTaskFile(project, message, allIssues + issueDetails);
 
       let finalReply;
+      try {
+        finalReply = await runOrchestratorCore(
+          sse, pid, agent, message, lang, pipeline,
+          modelObj, provider, allModels, allProviders, project, agentMap, cfg,
+          historyCtx, 0, allIssues, taskFile
+        );
 
-      // Always synthesize when orchestrator has Linear enabled — sub-agents don't
-      // know about Linear, so PM must review their work and decide what to update.
-      const needsSynthesis = agent.linearEnabled || delegations.length !== 1 || !results[0] || results[0].error;
+        const { cleanedReply, summary } = await applyLinearActions(project, finalReply);
+        if (summary) finalReply = cleanedReply + summary;
+        else finalReply = cleanedReply;
 
-      if (!needsSynthesis) {
-        log.info("chat", `orchestrator single-delegate, skipping synthesis`);
-        finalReply = results[0].reply;
-      } else {
-        sse({ type: "progress", text: "Synthesizing team responses…" });
-        log.info("chat", `orchestrator synthesizing ${results.length} results`);
+        db?.appendChatHistory(pid, aid, "user",      message);
+        db?.appendChatHistory(pid, aid, "assistant", finalReply);
+        db?.chatLog(pid, aid, "final_reply", agent.name, finalReply);
 
-        const synthCtx = results.map(r =>
-          r.error ? `**${r.agentName}** (error): ${r.error}` : `**${r.agentName}**:\n${r.reply}`
-        ).join("\n\n---\n\n");
-
-        // Include Linear context so PM can make decisions about task updates
-        const synthSystem  = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(lang) || ""}${allIssues}${linearFormat}`;
-        const linearInstruction = agent.linearEnabled
-          ? `\n\nBased on the user's original request and the team's response, decide if any Linear tasks need to be created or updated, and include the appropriate %%LINEAR_UPDATES%% or %%LINEAR_CREATE%% blocks at the END of your response.`
-          : "";
-        const synthMessage = `Original user request: "${message}"\n\nTeam responses:\n\n${synthCtx}\n\nProvide a clear, comprehensive answer that combines the team's work.${linearInstruction}`;
-
-        const synthTimer = log.timer();
-        finalReply = await ai.callAIMessages(modelObj, provider, synthSystem, [{ role: "user", content: synthMessage }]);
-        log.info("chat", `orchestrator synthesis done in ${synthTimer()}`);
+        sse({ type: "reply", text: finalReply });
+        res.end();
+        log.info("chat", `orchestrator done in ${totalTimer()}`);
+      } finally {
+        deleteTaskFile(taskFile);
       }
-
-      const { cleanedReply, summary } = await applyLinearActions(project, finalReply);
-      if (summary) finalReply = cleanedReply + summary;
-      else finalReply = cleanedReply;
-
-      db?.appendChatHistory(pid, aid, "user",      message);
-      db?.appendChatHistory(pid, aid, "assistant", finalReply);
-      db?.chatLog(pid, aid, "final_reply", agent.name, finalReply);
-
-      sse({ type: "reply", text: finalReply });
-      res.end();
-      log.info("chat", `orchestrator done in ${totalTimer()}`);
     } catch (err) {
       log.error("chat", `orchestrator error in ${totalTimer()} — ${err.message}`);
       db?.chatLog(pid, aid, "error", agent.name, err.message);
@@ -593,7 +724,7 @@ module.exports = function createChatRoutes(ctx) {
       const identity     = loadIdentity(project, aid);
       const linearCtx    = await buildLinearContext(project, agent);
       const linearFormat = agent.linearEnabled ? buildLinearFormatBlock() : "";
-      const fileAccess   = buildFileAccessBlock(agent.allowedTools);
+      const fileAccess   = buildFileAccessBlock(agent.allowedTools, project?.path);
       const history      = db?.getChatHistory(pid, aid) || [];
       const systemPrompt = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(body.lang)}${identity}${linearCtx}${linearFormat}${fileAccess}`;
       const messages     = [...history, { role: "user", content: message.trim() }];

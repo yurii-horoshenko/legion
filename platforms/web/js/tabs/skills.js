@@ -75,16 +75,14 @@ export async function renderSkills(a) {
       if (!agentSkills.length) {
         installedEl.innerHTML = `<div class="sk-empty">${i18n.t('sk_no_installed') || 'No skills assigned to this agent yet.'}</div>`;
       } else {
-        installedEl.innerHTML = `<div class="sk-list">${agentSkills.map(id => `
-          <div class="sk-card">
-            <div class="sk-card-head">
+        installedEl.innerHTML = `<div class="analyze-skills-chips">${agentSkills.map(id => `
+          <div class="analyze-skill-chip">
+            <div class="analyze-skill-chip-top">
               <span class="sk-type-icon">⚡</span>
-              <span class="sk-card-name">${esc(id)}</span>
+              <span class="analyze-skill-name">${esc(id)}</span>
+              <button class="btn-assign-one-skill sk-pill-remove" data-skill="${esc(id)}">Remove</button>
             </div>
-            ${descMap[id] ? `<div class="sk-card-reason">${esc(descMap[id])}</div>` : ''}
-            <div class="sk-card-foot">
-              <button class="sk-pill-remove" data-skill="${esc(id)}">Remove</button>
-            </div>
+            ${descMap[id] ? `<div class="analyze-skill-reason">${esc(descMap[id])}</div>` : ''}
           </div>`).join('')}</div>`;
         installedEl.querySelectorAll('.sk-pill-remove').forEach(btn => {
           btn.addEventListener('click', async () => {
@@ -101,16 +99,14 @@ export async function renderSkills(a) {
       if (!notAssigned.length) {
         availableEl.innerHTML = `<div class="sk-empty">${i18n.t('sk_no_available') || 'All your skills are already assigned.'}</div>`;
       } else {
-        availableEl.innerHTML = `<div class="sk-list">${notAssigned.map(s =>
-          `<div class="sk-card">
-            <div class="sk-card-head">
+        availableEl.innerHTML = `<div class="analyze-skills-chips">${notAssigned.map(s =>
+          `<div class="analyze-skill-chip">
+            <div class="analyze-skill-chip-top">
               <span class="sk-type-icon">⚡</span>
-              <span class="sk-card-name">${esc(s.id)}</span>
+              <span class="analyze-skill-name">${esc(s.id)}</span>
+              <button class="btn-assign-one-skill sk-avail-add" data-skill="${esc(s.id)}">+ Assign</button>
             </div>
-            ${s.description ? `<div class="sk-card-reason">${esc(s.description)}</div>` : ''}
-            <div class="sk-card-foot">
-              <button class="sk-avail-add" data-skill="${esc(s.id)}">+ Assign</button>
-            </div>
+            ${s.description ? `<div class="analyze-skill-reason">${esc(s.description)}</div>` : ''}
           </div>`).join('')}</div>`;
         availableEl.querySelectorAll('.sk-avail-add').forEach(btn => {
           btn.addEventListener('click', async () => {
@@ -184,22 +180,18 @@ export async function renderSkills(a) {
             <span class="sk-results-count">${r.skills.length} ${r.skills.length === 1 ? 'skill' : 'skills'} recommended</span>
             <button class="sk-assign-all-btn" id="sk-assign-all">⚡ Assign All</button>
           </div>
-          <div class="sk-list">
+          <div class="analyze-skills-chips">
             ${r.skills.map(s => `
-              <div class="sk-card">
-                <div class="sk-card-head">
+              <div class="analyze-skill-chip">
+                <div class="analyze-skill-chip-top">
                   <span class="sk-type-icon">${TYPE_ICONS[s.type] || '⚡'}</span>
-                  <span class="sk-card-name">${esc(s.name)}</span>
-                  <span class="sk-source-badge" style="background:${SOURCE_COLORS[s.source] || '#6b7280'}20;color:${SOURCE_COLORS[s.source] || '#6b7280'};border-color:${SOURCE_COLORS[s.source] || '#6b7280'}40">
-                    ${esc(SOURCE_LABELS[s.source] || s.source)}
-                  </span>
+                  <span class="analyze-skill-name">${esc(s.name)}</span>
+                  ${s.source ? `<span class="analyze-skill-source">${esc(SOURCE_LABELS[s.source] || s.source)}</span>` : ''}
+                  ${s.url ? `<a class="sk-link" href="${esc(s.url)}" target="_blank">↗</a>` : ''}
+                  <button class="btn-assign-one-skill sk-card-assign" data-skill="${esc(s.name)}">+ Assign</button>
                 </div>
-                <div class="sk-card-reason">${esc(s.reason)}</div>
-                <div class="sk-card-foot">
-                  ${s.install ? `<code class="sk-install">${esc(s.install)}</code>` : ''}
-                  ${s.url ? `<a class="sk-link" href="${esc(s.url)}" target="_blank">↗ Open</a>` : ''}
-                  <button class="sk-avail-add sk-card-assign" data-skill="${esc(s.name)}">+ Assign</button>
-                </div>
+                ${s.reason ? `<div class="analyze-skill-reason">${esc(s.reason)}</div>` : ''}
+                ${s.install ? `<code class="sk-install">${esc(s.install)}</code>` : ''}
               </div>`).join('')}
           </div>`;
 
