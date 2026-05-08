@@ -32,12 +32,14 @@ function parseFile(raw) {
     return true;
   });
 
-  const words   = real.join(' ').split(/\s+/).filter(Boolean).length;
-  const bullets = real.filter(l => /^[-*•]\s|\d+\.\s/.test(l.trim())).length;
-  const sections= (text.match(/^#{1,3}\s/gm) || []).length;
-  const todos   = (text.match(/\bTODO\b|\bTBD\b/g) || []).length;
+  const words     = real.join(' ').split(/\s+/).filter(Boolean).length;
+  const bullets   = real.filter(l => /^[-*•]\s|\d+\.\s/.test(l.trim())).length;
+  const sections  = (text.match(/^#{1,3}\s/gm) || []).length;
+  const todos     = (text.match(/\bTODO\b|\bTBD\b/g) || []).length;
+  // Table data rows — captures tool/invocation tables in SKILLS.md (| Tool | ... |)
+  const tableRows = real.filter(l => /^\|/.test(l.trim()) && !/^\|[-\s|:]+\|/.test(l.trim())).length;
 
-  return { words, bullets, sections, todos };
+  return { words, bullets, sections, todos, tableRows };
 }
 
 export async function renderAgentOverview(a) {
@@ -65,14 +67,17 @@ export async function renderAgentOverview(a) {
     } catch { return ''; }
   };
 
-  const [storeData, fileData, hasAvatar] = await Promise.all([
+  const [storeData, fileData, chatStats, hasAvatar] = await Promise.all([
     Promise.all([fetchStore('tasks'), fetchStore('memories'), fetchStore('channels'), fetchStore('cron'), fetchStore('pipeline')]),
-    Promise.all([fetchFile('IDENTITY.md'), fetchFile('SOUL.md'), fetchFile('CONTEXT.md'), fetchFile('MEMORY.md'), fetchFile('SKILLS.md')]),
+    Promise.all([fetchFile('IDENTITY.md'), fetchFile('SOUL.md'), fetchFile('CONTEXT.md'), fetchFile('MEMORY.md'), fetchFile('SKILLS.md'), fetchFile('USER.md')]),
+    fetch(`/api/projects/${pid}/agents/${aid}/chat-stats`).then(r => r.ok ? r.json() : { replies: 0, errors: 0 }).catch(() => ({ replies: 0, errors: 0 })),
     fetch(`/api/projects/${pid}/agents/${aid}/avatar`, { method: 'HEAD' }).then(r => r.ok).catch(() => false),
   ]);
 
-  const [tasks, memories, channels, cron, pipeline]             = storeData;
-  const [fIdentity, fSoul, fContext, fMemory, fSkills]          = fileData;
+  const [tasks, memories, channels, cron, pipeline]                    = storeData;
+  const [fIdentity, fSoul, fContext, fMemory, fSkills, fUser]          = fileData;
+  const chatReplies = chatStats.replies || 0;
+  const chatErrors  = chatStats.errors  || 0;
   const avatarUrl = `/api/projects/${pid}/agents/${aid}/avatar?t=${Date.now()}`;
 
   // ── Runtime data ──────────────────────────────────────────────────────────
@@ -88,8 +93,12 @@ export async function renderAgentOverview(a) {
 
   const activeCron  = cron.filter(c => c.enabled !== false).length;
   const pipeLinks   = pipeline.length;
+  const smartPipes  = pipeline.filter(p => p.condition === 'on_success').length;
   const chCount     = channels.length;
   const skillCount  = (a.skills || []).length;
+
+  // ── Agent age ─────────────────────────────────────────────────────────────
+  const ageDays = a.added ? Math.floor((Date.now() - new Date(a.added).getTime()) / 86400000) : -1;
 
   // ── File analysis ─────────────────────────────────────────────────────────
   const id = parseFile(fIdentity);
@@ -97,6 +106,7 @@ export async function renderAgentOverview(a) {
   const cx = parseFile(fContext);
   const me = parseFile(fMemory);
   const sk = parseFile(fSkills);
+  const us = parseFile(fUser);
 
   const descLen       = desc.length;
   // Count integration/API keywords in CONTEXT.md — shows how connected this agent's world is
@@ -107,56 +117,63 @@ export async function renderAgentOverview(a) {
   function stat(v) { return Math.round(Math.max(0, v)); }
 
   // ── Stat formulas ─────────────────────────────────────────────────────────
-  // Target ranges: fresh agent 20–50 · active agent 60–100 · elite 100+
+  // Target ranges: fresh well-configured agent 50–80 · active agent 80–120 · elite 120+
 
-  // Valor — identity definition depth + task track record
-  // 80-word identity = 40 base; perfect completion on 20 tasks = +80 → ~120
+  // Valor — identity depth (words + execution rule bullets) + task track record
+  // 100-word identity + 3 exec rules = ~60 base; perfect completion on 20 tasks = +80 → ~140
   const valor = stat(
     id.words * 0.5 +
+    id.bullets * 3 +
     (totalTasks > 0 ? (doneTasks / totalTasks) * 80 : 0)
   );
 
-  // Sorcery — assigned skills + documented tools + automation
-  // 8 skills + 8 bullets + 1 cron ≈ 74; 15 skills + 15 bullets + 3 cron ≈ 150
-  const sorcery = stat(skillCount * 5 + sk.bullets * 3 + activeCron * 10);
+  // Sorcery — assigned skills + tool table rows in SKILLS.md + bullets + cron
+  // Real agents use ### headers (not bullets) and | table | rows for tools — count both
+  // 8 skills + 17 table rows ≈ 74; 9 skills + 20 table rows + 1 cron ≈ 95
+  const sorcery = stat(skillCount * 5 + sk.tableRows * 2 + sk.bullets * 3 + activeCron * 10);
 
-  // Dominion — channels, pipelines, integration keywords in CONTEXT.md
-  // 3 channels + 2 pipelines ≈ 56; 5 channels + 5 pipelines + 8 keywords ≈ 134
+  // Dominion — channels, pipelines, integration keywords in CONTEXT.md + user context
+  // 2 pipelines + 10 keywords + context + user = ~77; 5 channels + 5 pipelines ≈ 134
   const dominion = stat(
     chCount * 12 + pipeLinks * 10 + integKeywords * 3 +
-    (cx.words > 50 ? 15 : cx.words > 20 ? 8 : 0)
+    (cx.words > 50 ? 15 : cx.words > 20 ? 8 : 0) +
+    (us.words > 20 ? 12 : 0) +
+    smartPipes * 5
   );
 
-  // Lore — persistent memories + documented knowledge in MEMORY/CONTEXT
-  // 10 memories + 100 words ≈ 110; sparse ≈ 10–30
-  const lore = stat(persistMems * 8 + me.words * 0.5 + cx.words * 0.3);
+  // Lore — persistent memories + MEMORY.md + CONTEXT.md + USER.md domain knowledge
+  // 90 MEMORY words + 180 CONTEXT words + 75 USER words ≈ 129; sparse ≈ 15–40
+  const lore = stat(persistMems * 8 + me.words * 0.5 + cx.words * 0.3 + us.words * 0.4);
 
   // Soul — values/personality in SOUL.md + description richness
-  // 8 bullets + 5 sections + 200-char desc ≈ 89; sparse ≈ 15–30
+  // 7 bullets + 4 sections + 200-char desc ≈ 87; sparse ≈ 15–30
   const soul = stat(so.bullets * 5 + so.sections * 8 + descLen * 0.1);
 
-  // Discipline — structural completeness of config files + memory quality
-  // 8 id-sections + 5 soul-sections + high persist ratio ≈ 112; sparse ≈ 20–40
+  // Discipline — structural completeness across ALL config files + USER.md + pipeline
+  // All files filled + USER.md + 2 pipeline links ≈ 79; sparse (only IDENTITY+SOUL) ≈ 20–35
   const discipline = stat(
-    id.sections * 5 + so.sections * 4 +
-    (totalMems > 0 ? (persistMems / totalMems) * 60 : 0)
+    id.sections * 4 + so.sections * 3 + sk.sections * 3 + cx.sections * 2 +
+    (us.words > 15 ? 15 : us.words > 0 ? 8 : 0) +
+    (me.words > 30 ? 10 : 0) +
+    (pipeLinks > 0 ? Math.min(pipeLinks * 4, 20) : 0) +
+    (totalMems > 0 ? (persistMems / totalMems) * 30 : 0)
   );
 
-  // Disorientation — chaos: TODOs, failures, stuck tasks, low-quality memories
-  const disorient = stat(allTodos * 8 + failedTasks * 20 + inProgTasks * 8 + tempMems * 6 + todoMems * 4);
+  // Disorientation — chaos: TODOs, file failures, stuck tasks, low-quality memories, chat errors
+  const disorient = stat(allTodos * 8 + failedTasks * 20 + inProgTasks * 8 + tempMems * 6 + todoMems * 4 + chatErrors * 10);
 
   // ── Level / XP ────────────────────────────────────────────────────────────
-  // Only completed tasks count — configuration (skills, cron, pipelines) is not earned XP
-  const xp    = doneTasks * 50;
+  // XP comes from real chat interactions (chat_logs), not artificial task records
+  const xp    = chatReplies * 50;
   const level = Math.floor(Math.sqrt(xp / 80));
   const xpCur = level * level * 80;
   const xpNxt = (level + 1) * (level + 1) * 80;
   const xpPct = Math.round((xp - xpCur) / Math.max(1, xpNxt - xpCur) * 100);
 
   // ── Stars (0–5) ──────────────────────────────────────────────────────────
-  // Earned through work: 0 if no activity, then scales with task success rate
-  const taskScore = totalTasks > 0 ? (doneTasks / totalTasks) * 100 : 0;
-  const perf  = xp > 0 ? taskScore * 0.6 + Math.max(0, 100 - disorient) * 0.4 : 0;
+  // Stars reflect quality: how clean is the agent's work (low errors) + how active
+  const errorRate = (chatReplies + chatErrors) > 0 ? chatErrors / (chatReplies + chatErrors) : 0;
+  const perf  = chatReplies > 0 ? (1 - errorRate) * 100 * 0.6 + Math.max(0, 100 - disorient) * 0.4 : 0;
   const stars = Math.min(5, Math.max(0, Math.ceil(perf / 20)));
 
   const rank = RANK_NAMES[Math.min(level, RANK_NAMES.length - 1)];
@@ -173,10 +190,13 @@ export async function renderAgentOverview(a) {
   ];
 
   function statRow(s, last) {
-    const barPct = Math.min(100, s.value);
+    // Disorient bar is inverted: high chaos = empty bar (visual warning), number stays honest
+    const barPct = s.key === 'disorient'
+      ? Math.max(0, 100 - Math.min(100, s.value))
+      : Math.min(100, s.value);
     let glowCls = '';
     if (s.key === 'soul'     && s.value > 80) glowCls = 'ov-stat-glow';
-    if (s.key === 'disorient'&& s.value > 70) glowCls = 'ov-stat-disorient-glow';
+    if (s.key === 'disorient'&& s.value > 60) glowCls = 'ov-stat-disorient-glow';
     return `
       <div class="ov-stat-row ${glowCls}${last ? ' ov-stat-last' : ''}">
         <span class="ov-stat-icon">${s.icon}</span>
@@ -193,11 +213,12 @@ export async function renderAgentOverview(a) {
 
   // ── Contextual insights ───────────────────────────────────────────────────
   const insights = [];
-  if (disorient > 70 && soul > 40)       insights.push({ t: 'warn', msg: T('insight_disorient_soul') });
-  if (valor < 20 && totalTasks > 3)      insights.push({ t: 'warn', msg: T('insight_stuck') });
-  if (lore === 0 && totalTasks > 5)      insights.push({ t: 'warn', msg: T('insight_no_lore') });
-  if (valor > 70 && lore > 50)           insights.push({ t: 'good', msg: T('insight_peak') });
-  if (sorcery > 60 && dominion > 50)     insights.push({ t: 'good', msg: T('insight_network') });
+  if (disorient > 60 && soul > 40)                       insights.push({ t: 'warn', msg: T('insight_disorient_soul') });
+  if (totalTasks > 3 && doneTasks < totalTasks * 0.25)   insights.push({ t: 'warn', msg: T('insight_stuck') });
+  if ((me.words + cx.words) < 30 && totalTasks > 5)      insights.push({ t: 'warn', msg: T('insight_no_lore') });
+  if (us.words === 0)                                     insights.push({ t: 'warn', msg: T('insight_no_user') });
+  if (valor > 90 && lore > 70)                           insights.push({ t: 'good', msg: T('insight_peak') });
+  if (sorcery > 80 && dominion > 60)                     insights.push({ t: 'good', msg: T('insight_network') });
 
   // ── Frame color reflects overall health ───────────────────────────────────
   let frameStyle = '';
@@ -206,6 +227,39 @@ export async function renderAgentOverview(a) {
 
   const starsHtml = Array.from({ length: 5 }, (_, i) =>
     `<span class="ov-star${i < stars ? ' ov-star-on' : ''}">★</span>`).join('');
+
+  // ── Activity summary ──────────────────────────────────────────────────────
+  const ageStr = ageDays < 0  ? '' :
+                 ageDays === 0 ? T('ov_act_age_today') :
+                 ageDays === 1 ? T('ov_act_age_1day') :
+                 i18n.t('ov_act_age_days', { n: ageDays });
+
+  // Chat-based activity line — reflects real work from chat_logs
+  const tasksLine = chatReplies === 0
+    ? `<span class="ov-act-dim">${T('ov_act_no_tasks')}</span>`
+    : `<span class="ov-act-done">${chatReplies} ${T('ov_act_replies')}</span>`
+    + (chatErrors > 0 ? ` <span class="ov-act-sep">·</span> <span class="ov-act-fail">${chatErrors} ${T('ov_act_errors')}</span>` : '');
+
+  // Dynamic memories (DB store) vs static MEMORY.md file — show whichever has data
+  const memsLine = totalMems > 0
+    ? `<span class="ov-act-val">${persistMems} ${T('ov_act_persist')}</span>`
+      + ((tempMems + todoMems) > 0 ? ` <span class="ov-act-sep">·</span> <span class="ov-act-dim">${tempMems + todoMems} ${T('ov_act_temp')}</span>` : '')
+    : me.words > 0
+      ? `<span class="ov-act-val">${me.words} ${T('ov_act_mem_words')}</span>`
+      : `<span class="ov-act-dim">${T('ov_act_no_mems')}</span>`;
+
+  const activityHtml = `
+    <div class="ov-activity">
+      <div class="ov-act-row">
+        <span class="ov-act-icon">📋</span>
+        <span class="ov-act-body">${tasksLine}</span>
+        ${ageStr ? `<span class="ov-act-age">${esc(ageStr)}</span>` : ''}
+      </div>
+      <div class="ov-act-row">
+        <span class="ov-act-icon">🧠</span>
+        <span class="ov-act-body">${memsLine}</span>
+      </div>
+    </div>`;
 
   el.innerHTML = `
     <div class="ov-layout">
@@ -239,6 +293,8 @@ export async function renderAgentOverview(a) {
 
         ${insights.length ? `<div class="ov-insights">${insights.map(ins =>
           `<div class="ov-insight ov-insight-${ins.t}">${esc(ins.msg)}</div>`).join('')}</div>` : ''}
+
+        ${activityHtml}
 
         <div class="ov-stats-label">${esc(i18n.t('ov_stats_label'))}</div>
         <div class="ov-stats">

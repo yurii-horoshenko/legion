@@ -179,6 +179,14 @@ module.exports = function createAgentRoutes(ctx) {
       return true;
     }
 
+    // GET /api/projects/:pid/agents/:aid/chat-stats — XP source from real chat_logs
+    if (urlPath.match(/^\/api\/projects\/[^/]+\/agents\/[^/]+\/chat-stats$/) && method === "GET") {
+      const parts = urlPath.split("/");
+      const projectId = parts[3], agentId = parts[5];
+      http.json(res, 200, db.getChatStats(projectId, agentId));
+      return true;
+    }
+
     // Agent data stores: GET/POST/PATCH/DELETE /api/projects/:pid/agents/:aid/:store[/:itemId]
     const storeMatch = urlPath.match(/^\/api\/projects\/([^/]+)\/agents\/([^/]+)\/(tasks|cron|workers|channels|memories|pipeline)(?:\/([^/]+))?$/);
     if (storeMatch) {
@@ -249,6 +257,156 @@ module.exports = function createAgentRoutes(ctx) {
         http.json(res, 200, { ok: true });
         return true;
       }
+    }
+
+    // POST /api/projects/:pid/agents/:aid/initialize  (SSE) — AI-populate all agent MD files
+    if (urlPath.match(/^\/api\/projects\/[^/]+\/agents\/[^/]+\/initialize$/) && method === "POST") {
+      const parts     = urlPath.split("/");
+      const projectId = parts[3];
+      const agentId   = parts[5];
+      const { progress, done, fail, isAborted } = http.createSSEHandler(res, req, "agent-init");
+
+      try {
+        const project = io.readProjects().find(p => p.id === projectId);
+        if (!project) return fail("Project not found");
+
+        const cfg = io.readConfig();
+        if (!cfg.defaultModelId) return fail("No default model configured");
+        const resolved = http.resolveModel(io.readModels(), io.readProviders(), cfg.defaultModelId);
+        if (!resolved) return fail("Model not found or provider not configured");
+        const { model, provider } = resolved;
+
+        const allAgents = io.readPAgents()[projectId] || [];
+        const agent = allAgents.find(a => a.id === agentId);
+        if (!agent) return fail("Agent not found");
+
+        // ── Load agent catalog definition ────────────────────────────────────
+        progress("Reading agent catalog definition…");
+        let agentDescription = agent.description || agent.role || "";
+        let agentTools = agent.tools || "Read, Write, Edit";
+        if (agent.catalogId) {
+          const catalogFile = path.join(ctx.webRoot, "data", "agents-catalog.json");
+          if (fs.existsSync(catalogFile)) {
+            try {
+              const catalog = JSON.parse(fs.readFileSync(catalogFile, "utf8"));
+              const entry = catalog.find(a => a.id === agent.catalogId);
+              if (entry) {
+                agentDescription = entry.description || agentDescription;
+                if (entry.tools) agentTools = entry.tools;
+              }
+            } catch {}
+          }
+          // Also try reading the catalog MD file directly for full content
+          const catalogMdCandidates = [
+            path.resolve(ctx.webRoot, "../../core/agents/catalog", agent.catalogId.replace(/^catalog\//, "") + ".md"),
+            path.resolve(ctx.webRoot, "../../core/agents", agent.catalogId + ".md"),
+          ];
+          for (const p of catalogMdCandidates) {
+            if (fs.existsSync(p)) {
+              try { agentDescription = fs.readFileSync(p, "utf8").slice(0, 3000); } catch {}
+              break;
+            }
+          }
+        }
+
+        // ── Scan project docs ────────────────────────────────────────────────
+        progress("Scanning project documentation…");
+        const docParts = [];
+        if (project.path) {
+          const candidates = ["README.md", "readme.md", "CLAUDE.md", "package.json", "pyproject.toml"];
+          for (const f of candidates) {
+            const fp = path.join(project.path, f);
+            if (fs.existsSync(fp)) {
+              try { docParts.push(`### ${f}\n${fs.readFileSync(fp, "utf8").slice(0, 2000)}`); } catch {}
+            }
+          }
+          // Also check .legion/LEGION.md for project agent context
+          const legionMd = path.join(project.path, ".legion", "LEGION.md");
+          if (fs.existsSync(legionMd)) {
+            try { docParts.push(`### .legion/LEGION.md\n${fs.readFileSync(legionMd, "utf8").slice(0, 1500)}`); } catch {}
+          }
+          // Check docs/ directory
+          const docsDir = path.join(project.path, "docs");
+          if (fs.existsSync(docsDir)) {
+            try {
+              const files = fs.readdirSync(docsDir).filter(f => /\.(md|txt)$/i.test(f)).slice(0, 3);
+              for (const f of files) {
+                try { docParts.push(`### docs/${f}\n${fs.readFileSync(path.join(docsDir, f), "utf8").slice(0, 1500)}`); } catch {}
+              }
+            } catch {}
+          }
+        }
+        const projectDocs = docParts.length ? docParts.join("\n\n") : "No documentation found.";
+        progress(`Loaded ${docParts.length} documentation file(s)`);
+
+        // ── Build existing agents list ────────────────────────────────────────
+        const existingAgents = allAgents
+          .filter(a => a.id !== agentId)
+          .map(a => `- ${a.name}: ${a.role || a.description || ""}`)
+          .join("\n") || "None yet";
+
+        // ── Load prompt template ─────────────────────────────────────────────
+        progress("Building initialization prompt…");
+        const tplPath = path.resolve(ctx.webRoot, "../../core/prompts/agent-init.md");
+        if (!fs.existsSync(tplPath)) return fail("agent-init.md prompt template not found");
+        const tpl = fs.readFileSync(tplPath, "utf8");
+
+        const agentSkills = (() => {
+          const agentDir = path.join(project.path || "", ".legion", "agents", agentId);
+          const skillsFile = path.join(agentDir, "SKILLS.md");
+          if (fs.existsSync(skillsFile)) {
+            const content = fs.readFileSync(skillsFile, "utf8");
+            const skills = content.match(/^### (.+)$/gm);
+            return skills ? skills.map(s => s.replace("### ", "")).join(", ") : "None";
+          }
+          return "None";
+        })();
+
+        const prompt = tpl
+          .replace("{{agent_name}}",        agent.name || agentId)
+          .replace("{{agent_role}}",        agent.role || agent.description || "")
+          .replace("{{agent_description}}", agentDescription)
+          .replace("{{agent_skills}}",      agentSkills)
+          .replace("{{agent_tools}}",       agentTools)
+          .replace("{{project_name}}",      project.name || "")
+          .replace("{{project_description}}", project.description || "No description")
+          .replace("{{project_docs}}",      projectDocs)
+          .replace("{{existing_agents}}",   existingAgents);
+
+        // ── Call AI ──────────────────────────────────────────────────────────
+        progress("Generating agent files with AI…");
+        if (isAborted()) return;
+        const raw = await ai.callAI(model, provider, prompt);
+        if (isAborted()) return;
+
+        // ── Parse and write files ────────────────────────────────────────────
+        progress("Parsing AI response…");
+        let files;
+        try { files = http.parseAIJson(raw); } catch { return fail("AI returned invalid JSON"); }
+
+        const allowed = ["CONTEXT.md", "USER.md", "MEMORY.md", "IDENTITY.md", "SOUL.md", "SKILLS.md"];
+        const agentDir = path.join(project.path || "", ".legion", "agents", agentId);
+        fs.mkdirSync(agentDir, { recursive: true });
+
+        const written = [];
+        for (const filename of allowed) {
+          if (files[filename]) {
+            const filePath = path.join(agentDir, filename);
+            fs.writeFileSync(filePath, files[filename]);
+            written.push(filename);
+            progress(`Wrote ${filename}`);
+          }
+        }
+
+        agentFs.buildClaudeAgentMd(project, agentId);
+        progress(`Done — wrote ${written.length} files: ${written.join(", ")}`);
+        done({ ok: true, files: written });
+
+      } catch (err) {
+        console.error("[agent-init]", err.message);
+        fail(err.message);
+      }
+      return true;
     }
 
     // POST /api/projects/:pid/agents/:aid/activate — write agent's model to .claude/settings.json

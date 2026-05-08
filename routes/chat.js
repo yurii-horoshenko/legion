@@ -84,6 +84,7 @@ module.exports = function createChatRoutes(ctx) {
   // Generic Linear actions format block — injected when agent.linearEnabled is true.
   function buildLinearFormatBlock() {
     return `\n\n## Linear Actions\n` +
+      `**RULE: Always create a Linear issue when the user gives you a task, work item, deliverable, or asks you to do something trackable. Do not skip this — if the request is actionable, create the issue.**\n\n` +
       `**Update existing tasks** — append at the END of your response:\n` +
       `%%LINEAR_UPDATES%%\n[{"issueId":"PROJ-XX","stateName":"State","title":"Updated title","description":"What to do and why."}]\n%%END_LINEAR_UPDATES%%\n\n` +
       `- \`issueId\` required. \`stateName\`, \`title\`, \`description\` optional — include only what you are changing.\n` +
@@ -92,7 +93,8 @@ module.exports = function createChatRoutes(ctx) {
       `**Create new tasks** — append at the END of your response:\n` +
       `%%LINEAR_CREATE%%\n[{"title":"Task title","description":"Markdown description","priority":"urgent|high|medium|low","labelNames":["Label Name"]}]\n%%END_LINEAR_CREATE%%\n\n` +
       `- \`title\` required. \`priority\`: urgent, high, medium, low (default: medium). \`labelNames\`: array of label names.\n` +
-      `- Both blocks can appear together in the same response.`;
+      `- Both blocks can appear together in the same response.\n` +
+      `- **When to create:** any new work request, feature, content deliverable, bug, or task mentioned by the user — create it automatically. One request = one or more issues.`;
   }
 
   // Resolve the best model for a sub-agent: own model → haiku from same provider → default.

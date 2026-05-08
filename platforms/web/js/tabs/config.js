@@ -85,6 +85,7 @@ export function renderConfig(a) {
             <textarea class="cfg-editor" id="cfg-editor" spellcheck="false" placeholder="Select a file…"></textarea>
             <div class="cfg-editor-foot">
               <span class="cfg-editor-status" id="cfg-editor-status"></span>
+              <button class="btn-cfg-init" id="cfg-auto-fill" title="AI fills all files based on project docs">✦ Auto-fill</button>
               <button class="btn-cfg-save" id="cfg-file-save">Save file</button>
             </div>
           </div>
@@ -206,6 +207,55 @@ export function renderConfig(a) {
       setTimeout(() => { status.textContent = ''; }, 2000);
     } catch {
       status.textContent = '✗ Save failed';
+    }
+  });
+
+  $('#cfg-auto-fill').addEventListener('click', async () => {
+    const btn    = $('#cfg-auto-fill');
+    const status = $('#cfg-editor-status');
+    btn.disabled = true;
+    btn.textContent = '…';
+    status.textContent = 'Initializing…';
+
+    try {
+      const es = new EventSource(`/api/projects/${S.projectId}/agents/${a.id}/initialize`, { withCredentials: false });
+      // POST via fetch-SSE pattern: EventSource only does GET, so we use POST + poll
+      es.close();
+
+      const res = await fetch(`/api/projects/${S.projectId}/agents/${a.id}/initialize`, { method: 'POST' });
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const ev = JSON.parse(line.slice(6));
+              if (ev.type === 'progress') status.textContent = ev.message;
+              if (ev.type === 'done') {
+                status.textContent = '✓ All files filled';
+                // Reload current file in editor
+                loadFile(currentFile);
+                setTimeout(() => { status.textContent = ''; }, 3000);
+              }
+              if (ev.type === 'fail') {
+                status.textContent = '✗ ' + ev.message;
+              }
+            } catch {}
+          }
+        }
+      }
+    } catch (err) {
+      status.textContent = '✗ ' + err.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '✦ Auto-fill';
     }
   });
 }
