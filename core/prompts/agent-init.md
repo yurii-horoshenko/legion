@@ -23,7 +23,7 @@ You are initializing a new AI agent for a software project. Your job is to fill 
 
 ## Your task
 
-Generate content for all 6 agent definition files. Each file must be specific to this agent's role in this exact project — never generic.
+Generate content for all 7 agent definition files. Each file must be specific to this agent's role in this exact project — never generic.
 
 ### Rules
 
@@ -33,6 +33,7 @@ Generate content for all 6 agent definition files. Each file must be specific to
 4. **IDENTITY.md** — Agent name, precise role in this project (not generic), personality, communication style, and mandatory execution rules: (a) use tools not words, (b) READ/WRITE/NOT touching before every task, (c) never fake completed actions.
 5. **SOUL.md** — Core values, behavioral principles, pre-execution rule (READ/WRITE/NOT touching format), and any role-specific behavioral constraints (e.g. backend agent: always separate branch + PR).
 6. **SKILLS.md** — List assigned skills with a table showing WHEN to invoke each skill (specific situation → action), and a Tools table mapping each tool to its purpose.
+7. **STATS.md** — Empty stats template per ADR-0005 (vault). Initial counters at 0, empty failure modes / lessons / suggestions. Frontmatter: `agent`, `created` (today), `last_updated` (today), `tasks_attempted: 0`, `tasks_succeeded: 0`.
 
 ### Language rule
 
@@ -49,7 +50,8 @@ Return ONLY valid JSON. No markdown fences, no explanation outside JSON.
   "MEMORY.md": "full file content as string",
   "IDENTITY.md": "full file content as string",
   "SOUL.md": "full file content as string",
-  "SKILLS.md": "full file content as string"
+  "SKILLS.md": "full file content as string",
+  "STATS.md": "full file content as string"
 }
 ```
 
