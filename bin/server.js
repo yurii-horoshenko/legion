@@ -25,17 +25,52 @@ module.exports = function startServer({ port, doOpen, webRoot }) {
   const log      = require("../lib/log");
   const db       = require("../lib/db")(configDir);
 
-  db.clearChatLogs();
-  log.info("server", "chat logs cleared for this session");
+  // Bounded retention instead of wiping on boot — run history survives restarts.
+  const _prunedLogs = db.pruneChatLogs();
+  if (_prunedLogs) log.info("server", `pruned ${_prunedLogs} old chat-log row(s)`);
   const io       = require("../lib/io")(configDir, db);
   const aiLib    = require("../lib/ai")(httpLib, io);
   const agentFs  = require("../lib/agents-fs")(io, agentsBaseDir, webRoot);
   const visor    = require("../lib/visor")(io, aiLib);
+  const memory   = require("../lib/memory")({ db, ai: aiLib, io });
+  const compactor = require("../lib/compactor")();
+  const defence  = require("../lib/defence");
+  const capture  = require("../lib/capture");
+  const stats    = require("../lib/stats");
+  const hooks    = require("../lib/hooks")();
+  const _cfg     = io.readConfig();
+  const toolGate = require("../lib/toolgate").createToolGate({
+    maxToolCallsPerMinute:  _cfg.maxToolCallsPerMinute,
+    preHookPath:            _cfg.toolPreHookPath,
+    preHookFailurePolicy:   _cfg.toolPreHookFailurePolicy,
+    maxToolRounds:          _cfg.maxToolRounds,
+  });
+  const agentLoop = require("../lib/agentloop")({ ai: aiLib, toolGate });
+  const runner    = require("../lib/runner")({ io, ai: aiLib, db, memory });
+  const scheduler = require("../lib/scheduler")({ io, db, runner });
+
+  // Opt-in built-in security hook: block messages with critical prompt-injection
+  // markers. Off by default (avoids false positives); enable via config
+  // `defenceBlockCritical: true`. Demonstrates the hooks abort contract.
+  if (_cfg.defenceBlockCritical) {
+    hooks.register(hooks.EVENTS.CHAT_START, (data) => {
+      if (defence.isCritical(data.message || "")) {
+        return { abort: true, message: "Request blocked: a possible prompt-injection pattern was detected." };
+      }
+    }, { id: "defence-critical", priority: hooks.PRIORITY.CRITICAL });
+    log.info("server", "defence hook enabled (blocks critical injection patterns)");
+  }
+
+  // Start the memory embedding indexer (also resumes any pending outbox work)
+  // and the maintenance daemon (importance decay + expiry prune).
+  memory.startIndexer();
+  memory.startMaintenance();
+  scheduler.start();
 
   // Sync .legion/agents → .claude/agents/ for native Claude Code pickup
   agentFs.syncClaudeAgents();
 
-  const ctx = { io, http: httpLib, ai: aiLib, agentFs, visor, db, webRoot, agentsBaseDir, port, exec };
+  const ctx = { io, http: httpLib, ai: aiLib, agentFs, visor, memory, compactor, defence, capture, stats, toolGate, agentLoop, hooks, runner, scheduler, db, webRoot, agentsBaseDir, port, exec };
 
   const handlers = [
     require("../routes/projects")(ctx),
@@ -52,6 +87,15 @@ module.exports = function startServer({ port, doOpen, webRoot }) {
     try {
       const { method } = req;
       const urlPath = req.url.split("?")[0];
+
+      // Block cross-origin browser requests to the API (localhost tool). Same-
+      // origin UI sends a localhost Origin; server-to-server callers (e.g. the
+      // Anthropic-compatible proxy) send none. Both are allowed.
+      const origin = req.headers.origin;
+      if (urlPath.startsWith("/api/") && origin && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) {
+        httpLib.json(res, 403, { error: "cross-origin requests are not allowed" });
+        return;
+      }
 
       if (urlPath.startsWith("/api/")) {
         const reqTimer = log.timer();
@@ -81,6 +125,10 @@ module.exports = function startServer({ port, doOpen, webRoot }) {
         // Avatar PUT uses raw binary — skip JSON parsing for that route
         if (!urlPath.match(/^\/api\/projects\/[^/]+\/agents\/[^/]+\/avatar$/)) {
           body = await httpLib.readBody(req);
+          if (body && body.__invalidJson) {
+            httpLib.json(res, 400, { error: "Invalid JSON body" });
+            return;
+          }
         }
       }
 

@@ -21,6 +21,20 @@ One command starts a web UI where you assemble agents, define pipelines, manage 
 
 ---
 
+## Vision & Goals
+
+The canonical statement of what Legion is for lives in **[docs/GOALS.md](docs/GOALS.md)**. In short:
+
+1. **Configure a project + assemble its agents and skills from the UI** — new or existing folder, AI-recommended team. ✅
+2. **Agents know their dependencies, split work into subtasks, and delegate** — ordered execution, cycle-safe. ✅
+3. **RPG-hero UI** — each agent's level/XP, stats, and weaknesses computed from real activity, so you can improve it. ✅
+4. **Drive it through chat + configure tasks in Linear.** 🟡 (chat + Linear done; project/Linear/model setup still UI-only)
+5. **New functionality auto-updates docs and gets code-reviewed.** ✅ (enforced — auto review + docs + session-note on implementation runs)
+
+See [docs/GOALS.md](docs/GOALS.md) for the honest status and evidence behind each.
+
+---
+
 ## Legion is right for you if
 
 ✅ You manage **multiple AI agents** across different projects and want one control plane
@@ -182,7 +196,7 @@ Every agent in a project gets its own directory:
 
 | Tab | What it does |
 |-----|-------------|
-| **Overview** | Description, capabilities, identity summary |
+| **Overview** | RPG-hero card — character art, **level/XP from real chat activity**, 7 stats (Valor, Sorcery, Dominion, Lore, Soul, Discipline, **Disorientation**), success stars, weakness insights, reset-state action |
 | **Chat** | Real AI chat — agent introduces itself on open using its configured model |
 | **Workers** | Persistent background processes with live status indicators |
 | **Memories** | Persistent / Temporary / Todo memory, synced to `MEMORY.md` on disk |
@@ -218,12 +232,29 @@ legion/
 │   └── server.js          ← HTTP server setup, route registration, static serving
 ├── lib/
 │   ├── catalog.js         ← Markdown catalog builder (runs at startup)
-│   ├── http.js            ← postJson, getJson, json(), readBody(), resolveModel()
-│   ├── db.js              ← SQLite layer (node:sqlite — projects, agents, stores, events)
+│   ├── http.js            ← postJson/getJson (status-aware, retry), json(), readBody(), resolveModel()
+│   ├── breaker.js         ← circuit breaker + retry/backoff (per-host)
+│   ├── db.js              ← SQLite layer (node:sqlite — projects, agents, stores, events,
+│   │                          memories + FTS5 + embeddings + edges + outbox, trace_id)
 │   ├── io.js              ← thin facade over db; API keys stored in gitignored files
 │   ├── ws.js              ← zero-dep WebSocket server (RFC 6455 via node:crypto)
 │   ├── agents-fs.js       ← read/write agent markdown files on disk
-│   ├── ai.js              ← provider abstraction for all 6 providers + SSE streaming
+│   ├── ai.js              ← 6-provider abstraction + SSE, failover, embeddings
+│   ├── vector.js          ← cosine similarity / top-k for semantic memory
+│   ├── memory.js          ← hybrid recall (FTS5 + vector + graph), outbox indexer, decay daemon
+│   ├── compactor.js       ← threshold-triggered context compaction
+│   ├── defence.js         ← prompt-injection / PII detection + normalization
+│   ├── toolgate.js        ← tool authorization gate (policy, rate-limit, pre-hook, loop guard)
+│   ├── hooks.js           ← lifecycle hook bus (priority, abort, data passthrough)
+│   ├── dag.js             ← subtask DAG validation + parallel execution waves
+│   ├── orchestrator.js    ← shared DELEGATE / Linear-block parsers
+│   ├── cron.js            ← 5-field cron matcher
+│   ├── runner.js          ← headless agent run (powers the scheduler)
+│   ├── scheduler.js       ← cron scheduler (60s tick)
+│   ├── tools.js           ← jailed file tools (Read/Write/Edit/LS/Glob/Grep)
+│   ├── agentloop.js       ← provider-agnostic tool-execution loop
+│   ├── capture.js         ← enforced code-review + docs + session notes
+│   ├── stats.js           ← per-agent STATS.md failure learning (ADR-0005)
 │   └── log.js             ← structured logger; level set via LEGION_LOG env var
 ├── routes/
 │   ├── projects.js        ← /api/projects
@@ -279,6 +310,32 @@ No framework. No bundler. No runtime dependencies. Node.js stdlib only.
 | Real-time WebSocket activity feed | ✅ Done |
 | Linear integration (create / update issues mid-chat) | ✅ Done |
 | Per-agent file access for Claude Code CLI agents | ✅ Done |
+| RPG-hero agent stats (level/XP, 7 stats, weaknesses) | ✅ Done |
+
+### Hardening — branch `feat/competitor-ports` (under review, not yet merged)
+
+Ports of the better ideas from competing runtimes (see [docs/IMPROVEMENT-PLAN.md](docs/IMPROVEMENT-PLAN.md)):
+
+| Area | Status |
+|------|--------|
+| Provider circuit breaker + retry + failover | 🔬 On branch |
+| Semantic memory (FTS5 + vector + graph) with durable outbox | 🔬 On branch |
+| Context compaction (replaces blind history truncation) | 🔬 On branch |
+| Tool/security gate + prompt-injection/PII defence | 🔬 On branch |
+| Lifecycle hooks + run-trace observability (`/api/trace/:id`) | 🔬 On branch |
+| Dependency-ordered delegation (subtask DAG) | 🔬 On branch |
+| Cron runtime (scheduler + headless runner) | 🔬 On branch |
+| Enforced auto docs-update + code-review (Goal 5) + session notes | 🔬 On branch |
+| Per-agent STATS.md failure learning (ADR-0005) | 🔬 On branch |
+| Real tool-execution loop (jailed file tools, provider-agnostic) | 🔬 On branch |
+
+### Planned
+
+| Feature | Status |
+|---------|--------|
+| Delegate review/docs to the dedicated catalog agents (not built-in prompts) | ⏳ Planned |
+| Chat-driven project / Linear / model setup (Goal 4 completion) | ⏳ Planned |
+| MCP client (connect external MCP servers as tools — now unblocked by the tool loop) | ⏳ Planned |
 
 ---
 

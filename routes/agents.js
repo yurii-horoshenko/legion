@@ -5,7 +5,7 @@ const path   = require("path");
 const crypto = require("crypto");
 
 module.exports = function createAgentRoutes(ctx) {
-  const { io, http, agentFs, port, db, ws } = ctx;
+  const { io, http, agentFs, port, db, ws, stats } = ctx;
 
   return async function handle(urlPath, method, req, res, body) {
 
@@ -184,6 +184,15 @@ module.exports = function createAgentRoutes(ctx) {
       const parts = urlPath.split("/");
       const projectId = parts[3], agentId = parts[5];
       http.json(res, 200, db.getChatStats(projectId, agentId));
+      return true;
+    }
+
+    // GET /api/projects/:pid/agents/:aid/stats — ADR-0005 attempts/success/failure-modes
+    if (urlPath.match(/^\/api\/projects\/[^/]+\/agents\/[^/]+\/stats$/) && method === "GET") {
+      const parts = urlPath.split("/");
+      const projectId = parts[3], agentId = parts[5];
+      const project = io.readProjects().find(p => p.id === projectId);
+      http.json(res, 200, (stats && project) ? stats.load(project, agentId) : { attempted: 0, succeeded: 0, failures: [] });
       return true;
     }
 

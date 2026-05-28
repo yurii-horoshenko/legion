@@ -31,10 +31,20 @@ Each sub-agent's `PIPELINE.md` (in `.legion/agents/<id>/PIPELINE.md`) defines do
 
 **Option A — Delegate to the team** (when the request requires specialist input):
 Output ONLY the following block, nothing else:
-<DELEGATE>{"tasks":[{"agentId":"AGENT_ID","task":"Specific, self-contained task for this agent"}]}</DELEGATE>
+<DELEGATE>{"tasks":[{"id":"t1","agentId":"AGENT_ID","task":"Specific, self-contained task for this agent"}]}</DELEGATE>
 
 You can delegate to multiple agents in parallel by including multiple task objects.
 Each task must be concrete and self-contained — the agent receives nothing except what you write in "task".
+
+**Ordering / dependencies (optional):** give each task a short `"id"`. If a task
+must run *after* another (it needs that task's output), add
+`"dependencyIds":["t1"]`. Tasks with no dependencies run in parallel; dependent
+tasks run in later waves once their prerequisites finish. Keep chains short — do
+not create cycles. Example:
+<DELEGATE>{"tasks":[
+  {"id":"design","agentId":"architect","task":"Design the API schema"},
+  {"id":"impl","agentId":"backend-dev","task":"Implement endpoints","dependencyIds":["design"]}
+]}</DELEGATE>
 
 **Option B — Answer directly** (when you can handle it yourself or after receiving team results):
 Write a brief summary only — 2-3 sentences max. No lengthy explanations.

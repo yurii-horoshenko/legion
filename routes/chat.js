@@ -1,9 +1,13 @@
 "use strict";
 
-const fs   = require("fs");
-const path = require("path");
-const os   = require("os");
-const log  = require("../lib/log");
+const fs     = require("fs");
+const path   = require("path");
+const os     = require("os");
+const crypto = require("crypto");
+const dag    = require("../lib/dag");
+const orch   = require("../lib/orchestrator");
+const tools  = require("../lib/tools");
+const log    = require("../lib/log");
 
 // In-memory intro cache: "pid:aid:lang" → { intro, ts }
 const introCache = new Map();
@@ -13,7 +17,45 @@ const INTRO_TTL_MS = 60 * 60 * 1000; // 1 hour
 const DONE_STATES = new Set(["done", "cancelled", "duplicate"]);
 
 module.exports = function createChatRoutes(ctx) {
-  const { io, http, ai, db, ws } = ctx;
+  const { io, http, ai, db, ws, memory, compactor, defence, hooks, capture, stats, runner, agentLoop } = ctx;
+  const EV = hooks?.EVENTS || {};
+
+  // Normalize externally-sourced content (Linear bodies, comments) before it
+  // enters a prompt — strips zero-width chars used to hide injected instructions.
+  const sanitizeExternal = (s) => (defence && s) ? defence.normalize(s) : s;
+
+  // ── Memory & context compaction helpers (Phase 1) ─────────────────────────
+
+  // Best-effort semantic recall block; never throws into the request path.
+  async function recallBlock(pid, query) {
+    if (!memory) return "";
+    try { return await memory.buildContextBlock(pid, query, { limit: 6 }); }
+    catch (err) { log.warn("chat:memory", `recall failed — ${err.message}`); return ""; }
+  }
+
+  // Store a conversation turn as memory (fire-and-forget).
+  function remember(pid, aid, role, content, kind) {
+    if (!memory || !content?.trim()) return;
+    memory.store(pid, aid, `${role}: ${content}`, { kind }).catch(() => {});
+  }
+
+  // Compact history into a summary + recent tail when it exceeds the token
+  // budget, instead of blindly slicing. Returns { summaryBlock, messages }.
+  async function compactHistory(pid, aid, history, candidates) {
+    if (!compactor || !history.length) return { summaryBlock: "", messages: history };
+    const summarize = async (older) => {
+      const transcript = older.map(m => `${m.role === "assistant" ? "Assistant" : "User"}: ${m.content}`).join("\n\n");
+      return ai.callAIMessagesResilient(candidates,
+        "Summarize this earlier part of a conversation concisely. Preserve decisions, facts, names, numbers, and open questions. Output only the summary.",
+        [{ role: "user", content: transcript }], { maxTokens: 700 });
+    };
+    const r = await compactor.maybeCompact(`${pid}:${aid}`, history, { budgetTokens: 8000, summarize });
+    if (r.compacted) {
+      remember(pid, aid, "summary", r.summary, "note");
+      return { summaryBlock: `\n\n## Conversation summary (older turns)\n${r.summary}`, messages: r.messages };
+    }
+    return { summaryBlock: "", messages: r.messages };
+  }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -28,6 +70,16 @@ module.exports = function createChatRoutes(ctx) {
 
   // Default tools granted to all agents inside a pipeline execution.
   const PIPELINE_TOOLS = "Read,Write,Edit,LS,Glob,Grep";
+
+  // Max parallel sub-agents per delegation — guards against fan-out explosion.
+  const MAX_DELEGATIONS = 8;
+
+  // Emit a progress ping every 12s while a long LLM call runs, so the UI never
+  // looks frozen. Cleared as soon as the promise settles.
+  async function withHeartbeat(sse, text, promise) {
+    const iv = setInterval(() => { try { sse({ type: "progress", text }); } catch {} }, 12_000);
+    try { return await promise; } finally { clearInterval(iv); }
+  }
 
   // File access instructions with project path — always injected for pipeline agents.
   function buildFileAccessBlock(allowedTools, projectPath) {
@@ -135,7 +187,7 @@ module.exports = function createChatRoutes(ctx) {
         return `- [${i.identifier}] ${i.title} | ${i.state?.name || "?"}${desc}`;
       }).join("\n");
       log.info("chat:linear", `loaded ${issues.length} active issues label="${agent.linearLabelName}"`);
-      return `\n\n## Your Current Linear Tasks (label: ${agent.linearLabelName})\n${lines}`;
+      return sanitizeExternal(`\n\n## Your Current Linear Tasks (label: ${agent.linearLabelName})\n${lines}`);
     } catch (err) {
       log.warn("chat:linear", `failed to fetch tasks for "${agent.name}": ${err.message}`);
       return "";
@@ -170,7 +222,7 @@ module.exports = function createChatRoutes(ctx) {
       }).join("\n");
 
       log.info("chat:linear", `loaded ${issues.length} active project issues`);
-      return `\n\n## All Linear Issues (${issues.length})\n${lines}`;
+      return sanitizeExternal(`\n\n## All Linear Issues (${issues.length})\n${lines}`);
     } catch (err) {
       log.warn("chat:linear", `failed to fetch all project issues: ${err.message}`);
       return "";
@@ -185,8 +237,8 @@ module.exports = function createChatRoutes(ctx) {
     if (!apiKey) return "";
 
     try {
-      const q = `{issue(id:"${identifier}"){identifier title description state{name}priority assignee{name}labels{nodes{name}}url updatedAt comments(first:25,orderBy:createdAt){nodes{body user{name}createdAt}}children{nodes{identifier title description state{name}}}}}`;
-      const result = await io.linearQuery(apiKey, q);
+      const q = `query($id:String!){issue(id:$id){identifier title description state{name}priority assignee{name}labels{nodes{name}}url updatedAt comments(first:25,orderBy:createdAt){nodes{body user{name}createdAt}}children{nodes{identifier title description state{name}}}}}`;
+      const result = await io.linearQuery(apiKey, q, { id: identifier });
       const issue  = result.data?.issue;
       if (!issue) return "";
 
@@ -217,7 +269,7 @@ module.exports = function createChatRoutes(ctx) {
       }
 
       log.info("chat:linear", `loaded full detail for ${identifier}`);
-      return lines.join("\n");
+      return sanitizeExternal(lines.join("\n"));
     } catch (err) {
       log.warn("chat:linear", `failed to fetch issue detail "${identifier}": ${err.message}`);
       return "";
@@ -227,28 +279,25 @@ module.exports = function createChatRoutes(ctx) {
   // ── Linear update executor ────────────────────────────────────────────────
 
   async function applyLinearUpdates(project, reply) {
-    const match = reply.match(/%%LINEAR_UPDATES%%([\s\S]*?)%%END_LINEAR_UPDATES%%/);
-    if (!match) return { cleanedReply: reply, summary: null };
-
-    const cleanedReply = reply.replace(/%%LINEAR_UPDATES%%[\s\S]*?%%END_LINEAR_UPDATES%%/g, "").trim();
+    const parsed = orch.parseLinearBlock(reply, "UPDATES");
+    if (!parsed.found) return { cleanedReply: reply, summary: null };
+    const cleanedReply = parsed.cleanedReply;
 
     const integ  = io.readIntegrations(project);
     const apiKey = integ.linear?.apiKey;
     if (!apiKey) return { cleanedReply, summary: "⚠️ Linear not configured — status updates skipped." };
 
-    let updates;
-    try { updates = JSON.parse(match[1].trim()); } catch {
-      return { cleanedReply, summary: "⚠️ Could not parse LINEAR_UPDATES block — invalid JSON." };
-    }
-    if (!Array.isArray(updates) || !updates.length) return { cleanedReply, summary: null };
+    if (parsed.invalid) return { cleanedReply, summary: "⚠️ Could not parse LINEAR_UPDATES block — invalid JSON." };
+    const updates = parsed.items;
+    if (!updates.length) return { cleanedReply, summary: null };
 
     const teamId = integ.linear?.defaultTeamId;
     let stateMap = {};
     try {
       const sq = teamId
-        ? `{ team(id:"${teamId}") { states { nodes { id name } } } }`
+        ? `query($t:String!){ team(id:$t) { states { nodes { id name } } } }`
         : `{ teams { nodes { states { nodes { id name } } } } }`;
-      const sr = await io.linearQuery(apiKey, sq);
+      const sr = await io.linearQuery(apiKey, sq, teamId ? { t: teamId } : {});
       const states = teamId
         ? (sr.data?.team?.states?.nodes || [])
         : (sr.data?.teams?.nodes?.flatMap(t => t.states?.nodes || []) || []);
@@ -263,7 +312,7 @@ module.exports = function createChatRoutes(ctx) {
       if (/^[0-9a-f-]{36}$/.test(rawId)) return rawId; // already a UUID
       // Identifier format: fetch via issue(id:) which accepts both
       try {
-        const r = await io.linearQuery(apiKey, `{ issue(id:"${rawId}") { id } }`);
+        const r = await io.linearQuery(apiKey, `query($id:String!){ issue(id:$id) { id } }`, { id: rawId });
         return r.data?.issue?.id || null;
       } catch { return null; }
     }
@@ -304,40 +353,36 @@ module.exports = function createChatRoutes(ctx) {
   }
 
   async function applyLinearCreates(project, reply) {
-    const match = reply.match(/%%LINEAR_CREATE%%([\s\S]*?)%%END_LINEAR_CREATE%%/);
-    if (!match) return { cleanedReply: reply, summary: null };
-
-    const cleanedReply = reply.replace(/%%LINEAR_CREATE%%[\s\S]*?%%END_LINEAR_CREATE%%/g, "").trim();
+    const parsed = orch.parseLinearBlock(reply, "CREATE");
+    if (!parsed.found) return { cleanedReply: reply, summary: null };
+    const cleanedReply = parsed.cleanedReply;
 
     const integ  = io.readIntegrations(project);
     const apiKey = integ.linear?.apiKey;
     if (!apiKey) return { cleanedReply, summary: "⚠️ Linear not configured — creates skipped." };
 
-    let creates;
-    try { creates = JSON.parse(match[1].trim()); } catch {
-      return { cleanedReply, summary: "⚠️ Could not parse LINEAR_CREATE block — invalid JSON." };
-    }
-    if (!Array.isArray(creates) || !creates.length) return { cleanedReply, summary: null };
+    if (parsed.invalid) return { cleanedReply, summary: "⚠️ Could not parse LINEAR_CREATE block — invalid JSON." };
+    const creates = parsed.items;
+    if (!creates.length) return { cleanedReply, summary: null };
 
     const teamId = integ.linear?.defaultTeamId;
     if (!teamId) return { cleanedReply, summary: "⚠️ Linear defaultTeamId not set — creates skipped." };
 
     let labelMap = {};
     try {
-      const lq = `{ team(id:"${teamId}") { labels { nodes { id name } } } }`;
-      const lr = await io.linearQuery(apiKey, lq);
+      const lq = `query($t:String!){ team(id:$t) { labels { nodes { id name } } } }`;
+      const lr = await io.linearQuery(apiKey, lq, { t: teamId });
       const labels = lr.data?.team?.labels?.nodes || [];
       labelMap = Object.fromEntries(labels.map(l => [l.name.toLowerCase(), l.id]));
     } catch (e) { log.warn("chat:linear", `failed to fetch labels: ${e.message}`); }
 
-    const PRIORITY_MAP = { urgent: 1, high: 2, medium: 3, low: 4 };
     const results = [];
 
     for (const c of creates) {
       if (!c.title) { results.push("⚠ skipped: missing title"); continue; }
       const input = { title: c.title, teamId };
       if (c.description) input.description = c.description;
-      if (c.priority)    input.priority = PRIORITY_MAP[c.priority.toLowerCase()] ?? 3;
+      if (c.priority)    input.priority = orch.PRIORITY_MAP[c.priority.toLowerCase()] ?? 3;
       if (c.labelNames?.length) {
         const ids = c.labelNames.map(n => labelMap[n.toLowerCase()]).filter(Boolean);
         if (ids.length) input.labelIds = ids;
@@ -370,7 +415,7 @@ module.exports = function createChatRoutes(ctx) {
   // Calls a single agent: if it has its own pipeline, runs it as a nested
   // orchestrator; otherwise calls it directly. Returns { agentName, task, reply }
   // or { agentName, error }. depth prevents infinite loops.
-  async function callAgent(sse, pid, orchestratorAid, subAgent, task, lang, allModels, allProviders, project, agentMap, cfg, parentProviderType, depth, allIssues, taskFile) {
+  async function callAgent(sse, pid, orchestratorAid, subAgent, task, lang, allModels, allProviders, project, agentMap, cfg, parentProviderType, depth, allIssues, taskFile, parentMemId) {
     const subResolved = resolveSubAgentModel(subAgent, allModels, allProviders, parentProviderType, cfg.defaultModelId);
     if (!subResolved) return { agentName: subAgent.name, error: "No model configured" };
 
@@ -383,22 +428,54 @@ module.exports = function createChatRoutes(ctx) {
         sse, pid, subAgent, task, lang, subPipeline,
         subResolved.model, subResolved.provider,
         allModels, allProviders, project, agentMap, cfg,
-        "", depth + 1, allIssues, taskFile
+        "", depth + 1, allIssues, taskFile, parentMemId
       );
     } else {
       log.info("chat", `delegate → ${subAgent.name} (leaf)`);
       const subIdentity   = loadIdentity(project, subAgent.id);
       const subFileAccess = buildFileAccessBlock(subAgent.allowedTools, project?.path);
-      const subSystem     = `You are ${subAgent.name}. ${subAgent.role || ""}${ai.langDirective(lang) || ""}${subIdentity}${subFileAccess}`;
-      // Inject current task file content so sub-agents work from file, not from Linear
-      const taskCtx = taskFile
-        ? `\n\n## Task Document (${taskFile})\n\n${readTaskFile(taskFile)}`
-        : "";
-      reply = await ai.callAIMessages(
-        subResolved.model, subResolved.provider, subSystem,
-        [{ role: "user", content: task + taskCtx }],
-        { maxTokens: 2048, allowedTools: subAgent.allowedTools || PIPELINE_TOOLS }
-      );
+      // Branch-fork isolation (Sloppy BranchRuntime): give the sub-agent a
+      // SCOPED context — memory relevant to its own task plus a bounded excerpt
+      // of the shared task file — instead of the entire growing document, which
+      // otherwise blows up tokens as more agents append to it.
+      const subMem        = await recallBlock(pid, task);
+      const subSystem     = `You are ${subAgent.name}. ${subAgent.role || ""}${ai.langDirective(lang) || ""}${subIdentity}${subFileAccess}${subMem}`;
+      const full          = readTaskFile(taskFile);
+      const excerpt       = full.length > 6000 ? `${full.slice(0, 1500)}\n…(trimmed)…\n${full.slice(-4000)}` : full;
+      const taskCtx       = taskFile ? `\n\n## Task Document (excerpt)\n\n${excerpt}` : "";
+      const subCandidates = ai.buildFailoverCandidates(subResolved, allModels, allProviders);
+      const granted       = subAgent.allowedTools || PIPELINE_TOOLS;
+      // Tool execution mode (config `toolExecution`): false | "readonly" (default) | "full".
+      // claude-cli runs its own internal tool loop, so it bypasses ours.
+      const toolMode = cfg.toolExecution === undefined ? "readonly" : cfg.toolExecution;
+      const effectiveTools = (toolMode === "full" || toolMode === true)
+        ? granted
+        : (toolMode === false ? "" : granted.split(",").map(s => s.trim()).filter(t => tools.READONLY.has(t)).join(","));
+
+      if (agentLoop && project?.path && subResolved.provider.type !== "claude-cli" && effectiveTools) {
+        reply = await agentLoop.run({
+          candidates: subCandidates, systemPrompt: subSystem,
+          messages: [{ role: "user", content: task + taskCtx }],
+          agentId: subAgent.id, projectRoot: project.path,
+          allowedTools: effectiveTools, sessionId: `${pid}:${subAgent.id}:${Date.now()}`, sse,
+        });
+      } else {
+        reply = await ai.callAIMessagesFailover(
+          subCandidates, subSystem,
+          [{ role: "user", content: task + taskCtx }],
+          { maxTokens: 2048, allowedTools: granted }
+        );
+      }
+
+      // Branch concludes: persist its result as one memory and link it back to
+      // the parent task (derivedFrom edge), so the distilled output re-enters
+      // shared memory without polluting the parent transcript.
+      if (memory && reply) {
+        try {
+          const childId = await memory.store(pid, subAgent.id, `${subAgent.name} on "${task.slice(0, 80)}": ${reply}`, { kind: "note", class: "branch-result" });
+          if (parentMemId && childId) memory.link(childId, parentMemId, "derivedFrom", 1.0);
+        } catch { /* memory is best-effort */ }
+      }
     }
 
     return { agentName: subAgent.name, task, reply };
@@ -408,18 +485,20 @@ module.exports = function createChatRoutes(ctx) {
   // historyCtx is only non-empty at the top level (conversation continuity).
   // allIssues is fetched once at depth=0 and passed down to avoid repeat API calls.
   // depth prevents infinite pipeline loops.
-  async function runOrchestratorCore(sse, pid, agent, message, lang, pipeline, modelObj, provider, allModels, allProviders, project, agentMap, cfg, historyCtx, depth, allIssues, taskFile) {
+  async function runOrchestratorCore(sse, pid, agent, message, lang, pipeline, modelObj, provider, allModels, allProviders, project, agentMap, cfg, historyCtx, depth, allIssues, taskFile, parentMemId) {
     const aid       = agent.id;
     const subAgents = pipeline.map(p => agentMap[p.targetAgentId]).filter(Boolean);
     if (allIssues === undefined) allIssues = await fetchAllProjectIssues(project);
     const identity  = loadIdentity(project, aid);
     const linearFormat = agent.linearEnabled ? buildLinearFormatBlock() : "";
+    const memBlock  = depth === 0 ? await recallBlock(pid, message) : "";
 
     if (!subAgents.length) {
       const fileAccess = buildFileAccessBlock(agent.allowedTools, project?.path);
-      const sp   = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(lang) || ""}${identity}${allIssues}${linearFormat}${fileAccess}${historyCtx}`;
-      const msgs = historyCtx ? [{ role: "user", content: message }] : [{ role: "user", content: message }];
-      return await ai.callAIMessages(modelObj, provider, sp, msgs, { allowedTools: agent.allowedTools || "" });
+      const sp   = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(lang) || ""}${identity}${allIssues}${linearFormat}${fileAccess}${memBlock}${historyCtx}`;
+      const msgs = [{ role: "user", content: message }];
+      const leafCandidates = ai.buildFailoverCandidates({ model: modelObj, provider }, allModels, allProviders);
+      return await ai.callAIMessagesResilient(leafCandidates, sp, msgs, { allowedTools: agent.allowedTools || "" });
     }
 
     const subAgentsList = subAgents.map(a => `- **${a.name}** (id: ${a.id}): ${a.role || a.description || "no role"}`).join("\n");
@@ -430,64 +509,82 @@ module.exports = function createChatRoutes(ctx) {
       .replace("{{agent_role}}",      agent.role || agent.description || "General-purpose agent")
       .replace("{{sub_agents_list}}", subAgentsList)
       .replace("{{lang_directive}}",  ai.langDirective(lang) || "")
-      + identity + linearFormat + fileAccess + allIssues + historyCtx;
+      + identity + linearFormat + fileAccess + allIssues + memBlock + historyCtx;
 
     sse({ type: "progress", text: depth === 0 ? "Analyzing request…" : `${agent.name} analyzing…` });
     log.info("chat", `orchestrator ${agent.name} analyzing (${subAgents.length} sub-agents, depth=${depth})`);
 
-    const orchestratorReply = await ai.callAIMessages(modelObj, provider, systemPrompt, [{ role: "user", content: message }], { allowedTools: agent.allowedTools || PIPELINE_TOOLS });
+    const candidates = ai.buildFailoverCandidates({ model: modelObj, provider }, allModels, allProviders);
+    const orchestratorReply = await withHeartbeat(
+      sse, depth === 0 ? "Analyzing request…" : `${agent.name} analyzing…`,
+      ai.callAIMessagesFailover(candidates, systemPrompt, [{ role: "user", content: message }], { allowedTools: agent.allowedTools || PIPELINE_TOOLS })
+    );
 
-    const delegateMatch = orchestratorReply.match(/<DELEGATE>([\s\S]*?)<\/DELEGATE>/);
-    if (!delegateMatch) {
+    const parsedDelegate = orch.parseDelegate(orchestratorReply);
+    if (!parsedDelegate) {
       db?.chatLog(pid, aid, "direct_reply", agent.name, orchestratorReply);
       return orchestratorReply;
     }
-
-    let delegations = [];
-    try {
-      delegations = JSON.parse(delegateMatch[1].trim()).tasks || [];
-    } catch {
-      return orchestratorReply.replace(/<DELEGATE>[\s\S]*?<\/DELEGATE>/, "").trim() || orchestratorReply;
+    if (parsedDelegate.invalid) {
+      return orch.stripDelegate(orchestratorReply) || orchestratorReply;
     }
+    const delegations = parsedDelegate.tasks;
 
     const planSummary = delegations.map(d => `${agentMap[d.agentId]?.name || d.agentId}: ${d.task}`).join("\n");
     db?.chatLog(pid, aid, "delegation_plan", agent.name, planSummary);
     log.info("chat", `${agent.name} delegating to ${delegations.length} agent(s)`);
 
-    const settled = await Promise.allSettled(
-      delegations
-        .filter(d => agentMap[d.agentId])
-        .map(async d => {
-          const subAgent = agentMap[d.agentId];
-          sse({ type: "delegate", agentName: subAgent.name, agentId: d.agentId, task: d.task });
-          db?.chatLog(pid, aid, "delegate_task", subAgent.name, d.task);
-          const delegateStart = Date.now();
+    const runnable = delegations.filter(d => agentMap[d.agentId]).slice(0, MAX_DELEGATIONS);
+    runnable.forEach((d, i) => { if (!d.id) d.id = `t${i}`; });
 
-          const result = await callAgent(sse, pid, aid, subAgent, d.task, lang, allModels, allProviders, project, agentMap, cfg, provider.type, depth, allIssues, taskFile);
-
-          if (result.error) {
-            db?.chatLog(pid, aid, "delegate_error", subAgent.name, result.error);
-            sse({ type: "agent_error", agentName: subAgent.name, error: result.error });
-            return result;
-          }
-
-          const elapsed = Date.now() - delegateStart;
-          log.info("chat", `delegate ← ${subAgent.name} in ${elapsed}ms`);
-          db?.chatLog(pid, aid, "delegate_reply", subAgent.name, result.reply, elapsed);
-          sse({ type: "agent_reply", agentName: subAgent.name, preview: result.reply.slice(0, 120) });
+    // Run a single delegation; never throws (returns an error result instead).
+    const runOne = async (d) => {
+      const subAgent = agentMap[d.agentId];
+      sse({ type: "delegate", agentName: subAgent.name, agentId: d.agentId, task: d.task });
+      db?.chatLog(pid, aid, "delegate_task", subAgent.name, d.task);
+      const delegateStart = Date.now();
+      try {
+        const result = await callAgent(sse, pid, aid, subAgent, d.task, lang, allModels, allProviders, project, agentMap, cfg, provider.type, depth, allIssues, taskFile, parentMemId);
+        if (result.error) {
+          db?.chatLog(pid, aid, "delegate_error", subAgent.name, result.error);
+          stats?.recordFailure(project, subAgent.id, result.error);
+          sse({ type: "agent_error", agentName: subAgent.name, error: result.error });
           return result;
-        })
-    );
+        }
+        const elapsed = Date.now() - delegateStart;
+        log.info("chat", `delegate ← ${subAgent.name} in ${elapsed}ms`);
+        db?.chatLog(pid, aid, "delegate_reply", subAgent.name, result.reply, elapsed);
+        stats?.recordSuccess(project, subAgent.id);
+        sse({ type: "agent_reply", agentName: subAgent.name, preview: result.reply.slice(0, 120) });
+        return result;
+      } catch (err) {
+        log.error("chat", `delegate ✗ ${subAgent.name} — ${err.message}`);
+        db?.chatLog(pid, aid, "delegate_error", subAgent.name, err.message || "Unknown error");
+        stats?.recordFailure(project, subAgent.id, err.message);
+        sse({ type: "agent_error", agentName: subAgent.name, error: err.message || "Error" });
+        return { agentName: subAgent.name, error: err.message || "Error" };
+      }
+    };
 
-    const results = settled.map((s, i) => {
-      if (s.status === "fulfilled") return s.value;
-      const subAgent = agentMap[delegations[i]?.agentId];
-      const name = subAgent?.name || delegations[i]?.agentId || "unknown";
-      log.error("chat", `delegate ✗ ${name} — ${s.reason?.message}`);
-      db?.chatLog(pid, aid, "delegate_error", name, s.reason?.message || "Unknown error");
-      sse({ type: "agent_error", agentName: name, error: s.reason?.message || "Error" });
-      return { agentName: name, error: s.reason?.message || "Error" };
-    });
+    // Validate the proposed subtask DAG and run in dependency-ordered waves.
+    // With no declared dependencies this is one flat parallel wave (unchanged
+    // behaviour); an invalid graph (cycle/bad dep) also degrades to flat.
+    const validation = dag.validate(runnable, { maxDepth: 6 });
+    let waves;
+    if (validation.ok && validation.hasDeps) {
+      waves = validation.waves;
+      log.info("chat", `delegation DAG: ${runnable.length} task(s) in ${waves.length} wave(s)`);
+    } else {
+      if (!validation.ok) log.warn("chat", `delegation DAG invalid (${validation.errors.join("; ")}) — flat parallel`);
+      waves = [runnable.map(d => d.id)];
+    }
+
+    const byId = new Map(runnable.map(d => [d.id, d]));
+    const results = [];
+    for (const wave of waves) {
+      const waveResults = await Promise.all(wave.map(id => runOne(byId.get(id))));
+      results.push(...waveResults);
+    }
 
     // Append each agent's response to the task file (builds audit trail)
     results.forEach(r => { if (r.reply) appendTaskFile(taskFile, r.agentName, r.reply); });
@@ -518,7 +615,10 @@ module.exports = function createChatRoutes(ctx) {
     const synthMessage = `Original user request: "${message}"\n\nTeam responses:\n\n${synthCtx}\n\nProvide a clear, comprehensive answer that combines the team's work.${linearInstruction}`;
 
     const synthTimer = log.timer();
-    const synthReply = await ai.callAIMessages(modelObj, provider, synthSystem, [{ role: "user", content: synthMessage }]);
+    const synthReply = await withHeartbeat(
+      sse, depth === 0 ? "Synthesizing team responses…" : `${agent.name} synthesizing…`,
+      ai.callAIMessagesResilient(candidates, synthSystem, [{ role: "user", content: synthMessage }], {})
+    );
     log.info("chat", `${agent.name} synthesis done in ${synthTimer()}`);
     return synthReply;
   }
@@ -537,7 +637,8 @@ module.exports = function createChatRoutes(ctx) {
     });
     const sse = data => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`); };
 
-    db?.chatLog(pid, aid, "user_message", agent.name, message);
+    const trace = crypto.randomUUID();
+    db?.chatLog(pid, aid, "user_message", agent.name, message, undefined, trace);
 
     try {
       const agentMap = {};
@@ -565,31 +666,55 @@ module.exports = function createChatRoutes(ctx) {
       // Create task file: PM loads full context once, all sub-agents read from it.
       const taskFile = createTaskFile(project, message, allIssues + issueDetails);
 
+      // Parent memory node for this run — sub-agent branch results link to it.
+      let parentMemId = null;
+      if (memory) { try { parentMemId = await memory.store(pid, aid, `Request: ${message}`, { kind: "goal", importance: 0.7 }); } catch {} }
+
       let finalReply;
       try {
         finalReply = await runOrchestratorCore(
           sse, pid, agent, message, lang, pipeline,
           modelObj, provider, allModels, allProviders, project, agentMap, cfg,
-          historyCtx, 0, allIssues, taskFile
+          historyCtx, 0, allIssues, taskFile, parentMemId
         );
 
         const { cleanedReply, summary } = await applyLinearActions(project, finalReply);
         if (summary) finalReply = cleanedReply + summary;
         else finalReply = cleanedReply;
 
+        // Goal 5 — enforced code-review + docs + session-note capture for
+        // implementation runs (config `autoReviewDocs`, on by default).
+        if (capture && cfg.autoReviewDocs !== false && capture.isImplementationRun(message)) {
+          const rdCandidates  = ai.buildFailoverCandidates({ model: modelObj, provider }, io.readModels(), io.readProviders());
+          const projAgents    = Object.values(agentMap);
+          const reviewerAgent = capture.findRoleAgent(projAgents, "review");
+          const writerAgent   = capture.findRoleAgent(projAgents, "docs");
+          const { review, docs, reviewedBy, documentedBy } = await withHeartbeat(sse, "Reviewing & documenting…",
+            capture.reviewAndDocument({ ai, candidates: rdCandidates, message, finalReply, runner, pid, reviewerAgent, writerAgent }));
+          finalReply += `\n\n---\n### 🔍 Auto code review (${reviewedBy})\n${review || "_(none)_"}\n\n### 📝 Docs / changelog (${documentedBy})\n${docs || "_(none)_"}`;
+          const note = capture.writeSessionNote(project, { message, finalReply, review, docs });
+          if (note) { db?.log("capture:session", pid, aid, { file: note }, trace); sse({ type: "progress", text: "Session note saved" }); }
+        }
+
         db?.appendChatHistory(pid, aid, "user",      message);
         db?.appendChatHistory(pid, aid, "assistant", finalReply);
-        db?.chatLog(pid, aid, "final_reply", agent.name, finalReply);
+        db?.chatLog(pid, aid, "final_reply", agent.name, finalReply, undefined, trace);
+        remember(pid, aid, "User", message, "event");
+        remember(pid, aid, agent.name, finalReply, "note");
+        stats?.recordSuccess(project, aid);
 
-        sse({ type: "reply", text: finalReply });
+        sse({ type: "reply", text: finalReply, trace });
         res.end();
+        hooks?.emit(EV.CHAT_REPLY, { pid, aid, trace, reply: finalReply }, { agent, mode: "orchestrator" }).catch(() => {});
         log.info("chat", `orchestrator done in ${totalTimer()}`);
       } finally {
         deleteTaskFile(taskFile);
       }
     } catch (err) {
       log.error("chat", `orchestrator error in ${totalTimer()} — ${err.message}`);
-      db?.chatLog(pid, aid, "error", agent.name, err.message);
+      db?.chatLog(pid, aid, "error", agent.name, err.message, undefined, trace);
+      stats?.recordFailure(io.readProjects().find(p => p.id === pid), aid, err.message);
+      hooks?.emit(EV.CHAT_ERROR, { pid, aid, trace, error: err.message }, { agent, mode: "orchestrator" }).catch(() => {});
       sse({ type: "error", error: err.message });
       if (!res.writableEnded) res.end();
     }
@@ -680,7 +805,8 @@ module.exports = function createChatRoutes(ctx) {
         .replace("{{lang_directive}}",   ai.langDirective(lang) || "");
 
       try {
-        const intro = await ai.callAIMessages(modelObj, provider, systemPrompt, [{ role: "user", content: "Introduce yourself." }]);
+        const introCandidates = ai.buildFailoverCandidates({ model: modelObj, provider }, io.readModels(), io.readProviders());
+        const intro = await ai.callAIMessagesResilient(introCandidates, systemPrompt, [{ role: "user", content: "Introduce yourself." }], {});
         introCache.set(cacheKey, { intro, ts: Date.now() });
         http.json(res, 200, { intro });
       } catch (err) {
@@ -720,19 +846,29 @@ module.exports = function createChatRoutes(ctx) {
 
       // Direct agent chat
       const chatTimer = log.timer();
+      const trace = crypto.randomUUID();
       log.info("chat", `start agent="${agent.name}" model=${modelObj.modelId} provider=${provider.type} pid=${pid}`);
-      db?.chatLog(pid, aid, "user_message", agent.name, message.trim());
+      db?.chatLog(pid, aid, "user_message", agent.name, message.trim(), undefined, trace);
+
+      // Lifecycle hook — a registered handler may veto the request.
+      if (hooks) {
+        const pre = await hooks.emit(EV.CHAT_START, { pid, aid, message: message.trim() }, { agent });
+        if (pre.aborted) { http.json(res, 200, { reply: pre.message || "Request blocked by a hook." }); return true; }
+      }
 
       const identity     = loadIdentity(project, aid);
       const linearCtx    = await buildLinearContext(project, agent);
       const linearFormat = agent.linearEnabled ? buildLinearFormatBlock() : "";
       const fileAccess   = buildFileAccessBlock(agent.allowedTools, project?.path);
-      const history      = db?.getChatHistory(pid, aid) || [];
-      const systemPrompt = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(body.lang)}${identity}${linearCtx}${linearFormat}${fileAccess}`;
+      const candidates   = ai.buildFailoverCandidates({ model: modelObj, provider }, io.readModels(), io.readProviders());
+      const rawHistory   = db?.getChatHistory(pid, aid) || [];
+      const memBlock     = await recallBlock(pid, message.trim());
+      const { summaryBlock, messages: history } = await compactHistory(pid, aid, rawHistory, candidates);
+      const systemPrompt = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(body.lang)}${identity}${linearCtx}${linearFormat}${fileAccess}${summaryBlock}${memBlock}`;
       const messages     = [...history, { role: "user", content: message.trim() }];
 
       try {
-        let reply = await ai.callAIMessages(modelObj, provider, systemPrompt, messages, { allowedTools: agent.allowedTools || "" });
+        let reply = await ai.callAIMessagesResilient(candidates, systemPrompt, messages, { allowedTools: agent.allowedTools || "" });
         log.info("chat", `done agent="${agent.name}" in ${chatTimer()} history=${history.length}msgs`);
 
         const { cleanedReply, summary } = await applyLinearActions(project, reply);
@@ -741,13 +877,19 @@ module.exports = function createChatRoutes(ctx) {
 
         db?.appendChatHistory(pid, aid, "user",      message.trim());
         db?.appendChatHistory(pid, aid, "assistant", reply);
-        db?.chatLog(pid, aid, "direct_reply", agent.name, reply);
-        db?.log("chat:message", pid, aid, { role: "user", preview: message.slice(0, 80) });
+        remember(pid, aid, "User", message.trim(), "event");
+        remember(pid, aid, agent.name, reply, "note");
+        db?.chatLog(pid, aid, "direct_reply", agent.name, reply, undefined, trace);
+        db?.log("chat:message", pid, aid, { role: "user", preview: message.slice(0, 80) }, trace);
         ws?.broadcast("chat:message", { pid, aid, agentName: agent.name, preview: message.slice(0, 80) });
-        http.json(res, 200, { reply });
+        stats?.recordSuccess(project, aid);
+        hooks?.emit(EV.CHAT_REPLY, { pid, aid, trace, reply }, { agent }).catch(() => {});
+        http.json(res, 200, { reply, trace });
       } catch (err) {
         log.error("chat", `fail agent="${agent.name}" in ${chatTimer()} — ${err.message}`);
-        db?.chatLog(pid, aid, "error", agent.name, err.message);
+        db?.chatLog(pid, aid, "error", agent.name, err.message, undefined, trace);
+        stats?.recordFailure(project, aid, err.message);
+        hooks?.emit(EV.CHAT_ERROR, { pid, aid, trace, error: err.message }, { agent }).catch(() => {});
         http.json(res, 500, { error: err.message });
       }
       return true;

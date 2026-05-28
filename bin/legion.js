@@ -103,6 +103,7 @@ async function cmdAsk(args) {
   const db        = require("../lib/db")(configDir);
   const io        = require("../lib/io")(configDir, db);
   const ai        = require("../lib/ai")(httpLib, io);
+  const orch      = require("../lib/orchestrator");
 
   // Find agent by name or id — only in projects that exist in the DB
   const agentsMap = db.readPAgents();
@@ -265,30 +266,28 @@ ${identity}${linearCtx}${subAgentCtx}${fileAccessBlock}${linearFormatBlock}`;
 
   // ── Apply %%LINEAR_UPDATES%% block from AI reply ───────────────────────────
   async function applyLinearUpdates(reply) {
-    const match = reply.match(/%%LINEAR_UPDATES%%([\s\S]*?)%%END_LINEAR_UPDATES%%/);
-    if (!match) return reply;
+    const parsed = orch.parseLinearBlock(reply, "UPDATES");
+    if (!parsed.found) return reply;
 
-    const cleaned = reply.replace(/%%LINEAR_UPDATES%%[\s\S]*?%%END_LINEAR_UPDATES%%/g, "").trim();
+    const cleaned = parsed.cleanedReply;
     if (!project?.path) return cleaned + "\n\n⚠️ No project path — Linear updates skipped.";
 
     const integ  = io.readIntegrations(project);
     const apiKey = integ.linear?.apiKey;
     if (!apiKey) return cleaned + "\n\n⚠️ Linear not configured — updates skipped.";
 
-    let updates;
-    try { updates = JSON.parse(match[1].trim()); } catch {
-      return cleaned + "\n\n⚠️ Could not parse LINEAR_UPDATES block — invalid JSON.";
-    }
-    if (!Array.isArray(updates) || !updates.length) return cleaned;
+    if (parsed.invalid) return cleaned + "\n\n⚠️ Could not parse LINEAR_UPDATES block — invalid JSON.";
+    const updates = parsed.items;
+    if (!updates.length) return cleaned;
 
     // Fetch state name→id map
     const teamId = integ.linear?.defaultTeamId;
     let stateMap = {};
     try {
       const sq = teamId
-        ? `{ team(id:"${teamId}") { states { nodes { id name } } } }`
+        ? `query($t:String!){ team(id:$t) { states { nodes { id name } } } }`
         : `{ teams { nodes { states { nodes { id name } } } } }`;
-      const sr = await io.linearQuery(apiKey, sq);
+      const sr = await io.linearQuery(apiKey, sq, teamId ? { t: teamId } : {});
       const states = teamId
         ? (sr.data?.team?.states?.nodes || [])
         : (sr.data?.teams?.nodes?.flatMap(t => t.states?.nodes || []) || []);
@@ -330,41 +329,38 @@ ${identity}${linearCtx}${subAgentCtx}${fileAccessBlock}${linearFormatBlock}`;
   }
 
   async function applyLinearCreates(reply) {
-    const match = reply.match(/%%LINEAR_CREATE%%([\s\S]*?)%%END_LINEAR_CREATE%%/);
-    if (!match) return reply;
+    const parsed = orch.parseLinearBlock(reply, "CREATE");
+    if (!parsed.found) return reply;
 
-    const cleaned = reply.replace(/%%LINEAR_CREATE%%[\s\S]*?%%END_LINEAR_CREATE%%/g, "").trim();
+    const cleaned = parsed.cleanedReply;
     if (!project?.path) return cleaned + "\n\n⚠️ No project path — Linear creates skipped.";
 
     const integ  = io.readIntegrations(project);
     const apiKey = integ.linear?.apiKey;
     if (!apiKey) return cleaned + "\n\n⚠️ Linear not configured — creates skipped.";
 
-    let creates;
-    try { creates = JSON.parse(match[1].trim()); } catch {
-      return cleaned + "\n\n⚠️ Could not parse LINEAR_CREATE block — invalid JSON.";
-    }
-    if (!Array.isArray(creates) || !creates.length) return cleaned;
+    if (parsed.invalid) return cleaned + "\n\n⚠️ Could not parse LINEAR_CREATE block — invalid JSON.";
+    const creates = parsed.items;
+    if (!creates.length) return cleaned;
 
     const teamId = integ.linear?.defaultTeamId;
     if (!teamId) return cleaned + "\n\n⚠️ Linear defaultTeamId not set — creates skipped.";
 
     let labelMap = {};
     try {
-      const lq = `{ team(id:"${teamId}") { labels { nodes { id name } } } }`;
-      const lr = await io.linearQuery(apiKey, lq);
+      const lq = `query($t:String!){ team(id:$t) { labels { nodes { id name } } } }`;
+      const lr = await io.linearQuery(apiKey, lq, { t: teamId });
       const labels = lr.data?.team?.labels?.nodes || [];
       labelMap = Object.fromEntries(labels.map(l => [l.name.toLowerCase(), l.id]));
     } catch { /* ignore */ }
 
-    const PRIORITY_MAP = { urgent: 1, high: 2, medium: 3, low: 4 };
     const results = [];
 
     for (const c of creates) {
       if (!c.title) { results.push("⚠ skipped: missing title"); continue; }
       const input = { title: c.title, teamId };
       if (c.description) input.description = c.description;
-      if (c.priority)    input.priority = PRIORITY_MAP[c.priority.toLowerCase()] ?? 3;
+      if (c.priority)    input.priority = orch.PRIORITY_MAP[c.priority.toLowerCase()] ?? 3;
       if (c.labelNames?.length) {
         const ids = c.labelNames.map(n => labelMap[n.toLowerCase()]).filter(Boolean);
         if (ids.length) input.labelIds = ids;
@@ -439,10 +435,9 @@ ${identity}${linearCtx}${subAgentCtx}${fileAccessBlock}${linearFormatBlock}`;
   // ── Process one AI reply (DELEGATE → sub-agents → synthesis → Linear) ────────
   async function processReply(reply, userMessage) {
     // Check for orchestrator DELEGATE block first
-    const delMatch = reply.match(/<DELEGATE>([\s\S]*?)<\/DELEGATE>/);
-    if (delMatch) {
-      let delegations = [];
-      try { delegations = JSON.parse(delMatch[1].trim()).tasks || []; } catch {}
+    const parsedDelegate = orch.parseDelegate(reply);
+    if (parsedDelegate && parsedDelegate.tasks.length) {
+      const delegations = parsedDelegate.tasks;
       if (delegations.length) {
         process.stderr.write(`\n  Delegating to ${delegations.length} agent(s)…\n`);
         const results = await runDelegations(delegations);

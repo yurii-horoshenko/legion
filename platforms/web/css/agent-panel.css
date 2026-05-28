@@ -392,7 +392,8 @@
 }
 
 /* ── Stats: unified list ── */
-.ov-stats-label {
+.ov-stats-label,
+.ov-track-label {
   font-family: var(--mono);
   font-size: 9px;
   letter-spacing: .1em;
@@ -400,6 +401,7 @@
   color: var(--text-3);
   margin-bottom: 6px;
 }
+.ov-track-label { margin-top: 12px; }
 
 .ov-stats {
   border: 1px solid var(--border);
@@ -1489,4 +1491,17 @@
 .orch-done { color: var(--ok); }
 .orch-done b { color: var(--ok); }
 .orch-err { color: #ef4444; }
+.orch-tool { color: var(--text-2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; }
+.orch-tool b { color: var(--text); }
+
+/* Run-trace viewer (collapsible under an agent reply) */
+.run-trace { margin-top: 10px; font-size: 0.8rem; }
+.run-trace summary { cursor: pointer; color: var(--text-3); user-select: none; }
+.run-trace-body { margin-top: 6px; max-height: 240px; overflow: auto; border-left: 2px solid var(--border); padding-left: 8px; }
+.rt-row { padding: 2px 0; color: var(--text-2); }
+.rt-type { color: var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; }
+.rt-actor { color: var(--text-3); }
+
+/* Cron last-run badge */
+.cron-last { color: var(--text-3); font-size: 0.8rem; margin: 0 6px; }
 

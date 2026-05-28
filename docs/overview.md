@@ -3,6 +3,11 @@
 > Local platform for building and managing AI agent teams.  
 > Starts with one command, runs in the browser, stores everything on disk.
 
+> **Canonical docs:** product goals/status → [GOALS.md](GOALS.md); hardening (Phase 0–6
+> subsystems + extended schema: memory/FTS5/embeddings/edges/outbox/recall-log, trace_id,
+> hooks, toolgate, dag, cron) → [IMPROVEMENT-PLAN.md](IMPROVEMENT-PLAN.md). The architecture
+> below describes the **core request flow**; it does not list every Phase 0–6 module.
+
 ---
 
 ## Architecture

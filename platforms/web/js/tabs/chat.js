@@ -119,6 +119,26 @@ export function renderChat(a) {
       .catch(() => {});
   }
 
+  // Append a collapsible run-trace timeline under an agent reply (lazy-loaded).
+  function appendTrace(bub, trace) {
+    if (!bub || !trace) return;
+    const det = document.createElement('details');
+    det.className = 'run-trace';
+    det.innerHTML = `<summary>🔍 Run trace</summary><div class="run-trace-body">Loading…</div>`;
+    bub.appendChild(det);
+    det.addEventListener('toggle', async () => {
+      if (!det.open || det.dataset.loaded) return;
+      det.dataset.loaded = '1';
+      const body = det.querySelector('.run-trace-body');
+      try {
+        const d = await fetch(`/api/trace/${encodeURIComponent(trace)}`).then(r => r.json());
+        body.innerHTML = (d.events || []).map(e =>
+          `<div class="rt-row"><span class="rt-type">${esc(e.type || '')}</span> <span class="rt-actor">${esc(e.actor || '')}</span> <span class="rt-content">${esc((e.content || '').slice(0, 160))}</span></div>`
+        ).join('') || '<div class="rt-row">(no events)</div>';
+      } catch { body.textContent = 'Failed to load trace'; }
+    });
+  }
+
   // ── SSE orchestrator handler ──────────────────────────────────────────────
   async function readOrchestratorSSE(response, bub) {
     const reader = response.body.getReader();
@@ -134,6 +154,7 @@ export function renderChat(a) {
         if (s.type === 'delegate')    return `<div class="orch-step orch-delegating">→ <b>${esc(s.agentName)}</b>: <em>${esc((s.task || '').slice(0, 80))}${(s.task || '').length > 80 ? '…' : ''}</em></div>`;
         if (s.type === 'agent_reply') return `<div class="orch-step orch-done">← <b>${esc(s.agentName)}</b> responded</div>`;
         if (s.type === 'agent_error') return `<div class="orch-step orch-err">⚠ <b>${esc(s.agentName)}</b>: ${esc(s.error)}</div>`;
+        if (s.type === 'tool')        return `<div class="orch-step orch-tool">🔧 <b>${esc(s.name)}</b> ${s.ok === false ? '✗' : '✓'}</div>`;
         return '';
       }).join('');
       msgs.scrollTop = msgs.scrollHeight;
@@ -154,7 +175,7 @@ export function renderChat(a) {
           try { data = JSON.parse(line.slice(6)); } catch { continue; }
 
           if (data.type === 'reply') {
-            if (bub) { bub.innerHTML = renderMd(data.text); bub.style.cssText = ''; }
+            if (bub) { bub.innerHTML = renderMd(data.text); bub.style.cssText = ''; appendTrace(bub, data.trace); }
             return;
           }
           if (data.type === 'error') {
@@ -214,7 +235,7 @@ export function renderChat(a) {
       } else {
         const d = await r.json();
         if (bub) {
-          if (d.reply) { bub.innerHTML = renderMd(d.reply); bub.style.cssText = ''; }
+          if (d.reply) { bub.innerHTML = renderMd(d.reply); bub.style.cssText = ''; appendTrace(bub, d.trace); }
           else { bub.textContent = d.error || 'No response'; bub.style.color = '#ef4444'; bub.style.fontStyle = 'italic'; }
         }
       }

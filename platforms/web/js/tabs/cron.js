@@ -13,6 +13,16 @@ export async function renderCron(a) {
   el.innerHTML = desc + `<div class="tab-loading">Loading…</div>`;
 
   let jobs = await storeGet(aid, 'cron');
+  const runs = await fetch(`/api/projects/${S.projectId}/cron-runs`).then(r => r.ok ? r.json() : {}).catch(() => ({}));
+
+  const ago = (ts) => {
+    if (!ts) return '';
+    const s = Math.floor((Date.now() - ts) / 1000);
+    if (s < 60) return `${s}s ago`;
+    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+    if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+    return `${Math.floor(s / 86400)}d ago`;
+  };
 
   function paint() {
     if (!jobs.length) {
@@ -42,6 +52,7 @@ export async function renderCron(a) {
                   <span class="cron-track"></span>
                 </label>
                 <span class="cron-status">${j.enabled ? 'Active' : 'Paused'}</span>
+                ${runs[j.id] ? `<span class="cron-last" title="${esc(runs[j.id].detail || '')}">${runs[j.id].status === 'error' ? '✗' : runs[j.id].status === 'done' ? '✓' : '…'} ${ago(runs[j.id].ts)}</span>` : ''}
                 <button class="cron-edit" data-id="${j.id}">Edit</button>
                 <button class="cron-del" data-id="${j.id}">Delete</button>
               </div>

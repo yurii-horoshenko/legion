@@ -217,6 +217,30 @@ export function renderGeneral() {
         linAllToggle.checked = true;
       });
   }
+
+  // ── Runtime flags (Phase 0–9) ──────────────────────────────────────────
+  const putConfig = (patch) =>
+    fetch('/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
+      .then(r => r.json()).then(setLegionConfig).catch(() => {});
+
+  const toolExec = $('#general-tool-exec');
+  if (toolExec) {
+    const v = LEGION_CONFIG.toolExecution;
+    toolExec.value = (v === false || v === 'false') ? 'false' : (v === 'full' || v === true) ? 'full' : 'readonly';
+    toolExec.addEventListener('change', () => putConfig({ toolExecution: toolExec.value === 'false' ? false : toolExec.value }));
+  }
+
+  const autoRev = $('#general-auto-review');
+  if (autoRev) {
+    autoRev.checked = LEGION_CONFIG.autoReviewDocs !== false;
+    autoRev.addEventListener('change', () => putConfig({ autoReviewDocs: autoRev.checked }));
+  }
+
+  const defence = $('#general-defence');
+  if (defence) {
+    defence.checked = LEGION_CONFIG.defenceBlockCritical === true;
+    defence.addEventListener('change', () => putConfig({ defenceBlockCritical: defence.checked }));
+  }
 }
 
 // ── Providers ──────────────────────────────────────────────────────────────

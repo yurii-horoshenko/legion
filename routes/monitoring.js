@@ -5,6 +5,28 @@ module.exports = function createMonitoringRoutes(ctx) {
 
   return async function handle(urlPath, method, req, res, body) {
 
+    // GET /api/trace/:traceId — reconstruct a single run's chat-log timeline
+    if (urlPath.match(/^\/api\/trace\/[^/]+$/) && method === "GET") {
+      const traceId = decodeURIComponent(urlPath.split("/")[3]);
+      http.json(res, 200, { traceId, events: db.getTrace(traceId) });
+      return true;
+    }
+
+    // GET /api/projects/:pid/cron-runs — last execution status per cron job
+    if (urlPath.match(/^\/api\/projects\/[^/]+\/cron-runs$/) && method === "GET") {
+      const pid = urlPath.split("/")[3];
+      const events = db.recent(pid, 300).filter(e => (e.type || "").startsWith("cron:")); // newest-first
+      const runs = {};
+      for (const e of events) {
+        const jid = e.data?.jobId;
+        if (!jid || runs[jid]) continue; // first seen = latest event for this job
+        const status = e.type === "cron:error" ? "error" : e.type === "cron:done" ? "done" : "fired";
+        runs[jid] = { ts: e.ts, status, detail: e.data?.error || e.data?.preview || "" };
+      }
+      http.json(res, 200, runs);
+      return true;
+    }
+
     // GET /api/projects/:pid/visor  — list bulletins
     if (urlPath.match(/^\/api\/projects\/[^/]+\/visor$/) && method === "GET") {
       const pid = urlPath.split("/")[3];

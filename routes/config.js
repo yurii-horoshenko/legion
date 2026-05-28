@@ -70,6 +70,13 @@ module.exports = function createConfigRoutes(ctx) {
       return true;
     }
 
+    // GET /api/health — provider circuit-breaker states (failover visibility)
+    if (urlPath === "/api/health" && method === "GET") {
+      const { breakerStates } = require("../lib/breaker");
+      http.json(res, 200, { breakers: breakerStates() });
+      return true;
+    }
+
     // GET /api/config
     if (urlPath === "/api/config" && method === "GET") {
       http.json(res, 200, io.readConfig());

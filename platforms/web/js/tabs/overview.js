@@ -67,10 +67,11 @@ export async function renderAgentOverview(a) {
     } catch { return ''; }
   };
 
-  const [storeData, fileData, chatStats, hasAvatar] = await Promise.all([
+  const [storeData, fileData, chatStats, agentStats, hasAvatar] = await Promise.all([
     Promise.all([fetchStore('tasks'), fetchStore('memories'), fetchStore('channels'), fetchStore('cron'), fetchStore('pipeline')]),
     Promise.all([fetchFile('IDENTITY.md'), fetchFile('SOUL.md'), fetchFile('CONTEXT.md'), fetchFile('MEMORY.md'), fetchFile('SKILLS.md'), fetchFile('USER.md')]),
     fetch(`/api/projects/${pid}/agents/${aid}/chat-stats`).then(r => r.ok ? r.json() : { replies: 0, errors: 0 }).catch(() => ({ replies: 0, errors: 0 })),
+    fetch(`/api/projects/${pid}/agents/${aid}/stats`).then(r => r.ok ? r.json() : { attempted: 0, succeeded: 0, failures: [] }).catch(() => ({ attempted: 0, succeeded: 0, failures: [] })),
     fetch(`/api/projects/${pid}/agents/${aid}/avatar`, { method: 'HEAD' }).then(r => r.ok).catch(() => false),
   ]);
 
@@ -219,6 +220,9 @@ export async function renderAgentOverview(a) {
   if (us.words === 0)                                     insights.push({ t: 'warn', msg: T('insight_no_user') });
   if (valor > 90 && lore > 70)                           insights.push({ t: 'good', msg: T('insight_peak') });
   if (sorcery > 80 && dominion > 60)                     insights.push({ t: 'good', msg: T('insight_network') });
+  // ADR-0005: surface a recurring failure pattern as a weakness insight.
+  const _recur = (agentStats.failures || []).find(f => (f.count || 0) >= 2);
+  if (_recur) insights.push({ t: 'warn', msg: `Recurring failure: ${_recur.pattern} (×${_recur.count})` });
 
   // ── Frame color reflects overall health ───────────────────────────────────
   let frameStyle = '';
@@ -261,6 +265,30 @@ export async function renderAgentOverview(a) {
       </div>
     </div>`;
 
+  // ── Track record (ADR-0005 STATS.md) ──────────────────────────────────────
+  const att = agentStats.attempted || 0, suc = agentStats.succeeded || 0;
+  const failed = Math.max(0, att - suc);
+  const sr  = att > 0 ? Math.round(suc / att * 100) : null;
+  const topFails = (agentStats.failures || []).slice(0, 3);
+  // Always show the track record (attempts / successes / failures), even at zero.
+  const trackHtml = `
+    <div class="ov-track-label">Track record</div>
+    <div class="ov-activity">
+      <div class="ov-act-row">
+        <span class="ov-act-icon">📈</span>
+        <span class="ov-act-body">
+          <span class="ov-act-val">${att} attempts</span>
+          <span class="ov-act-sep">·</span>
+          <span class="ov-act-done">${suc} ok</span>
+          <span class="ov-act-sep">·</span>
+          <span class="${failed ? 'ov-act-fail' : 'ov-act-dim'}">${failed} failed</span>
+          ${sr !== null ? ` <span class="ov-act-sep">·</span> <span class="ov-act-val">${sr}% success</span>` : ''}
+        </span>
+      </div>
+      ${att === 0 ? `<div class="ov-act-row"><span class="ov-act-icon">·</span><span class="ov-act-body ov-act-dim">No tasks run yet — chat with this agent to start tracking.</span></div>` : ''}
+      ${topFails.length ? `<div class="ov-act-row"><span class="ov-act-icon">⚠️</span><span class="ov-act-body">${topFails.map(f => `<span class="ov-act-fail" title="${esc(f.description || '')}">${esc(f.pattern)} ×${f.count}</span>`).join(' <span class="ov-act-sep">·</span> ')}</span></div>` : ''}
+    </div>`;
+
   el.innerHTML = `
     <div class="ov-layout">
 
@@ -295,6 +323,7 @@ export async function renderAgentOverview(a) {
           `<div class="ov-insight ov-insight-${ins.t}">${esc(ins.msg)}</div>`).join('')}</div>` : ''}
 
         ${activityHtml}
+        ${trackHtml}
 
         <div class="ov-stats-label">${esc(i18n.t('ov_stats_label'))}</div>
         <div class="ov-stats">

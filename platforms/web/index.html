@@ -329,6 +329,31 @@
             </div>
           </div>
         </div>
+        <div class="cfg-section">
+          <div class="cfg-section-label">Runtime</div>
+          <div class="cfg-model-row">
+            <select class="field-input cfg-model-select" id="general-tool-exec">
+              <option value="readonly">Tools: read-only (Read/LS/Glob/Grep)</option>
+              <option value="full">Tools: full (incl. Write/Edit)</option>
+              <option value="false">Tools: disabled</option>
+            </select>
+          </div>
+          <div class="cfg-hint">Real tool execution for API-provider agents. Read-only is safe; “full” lets agents write project files.</div>
+          <div class="cfg-auto-apply-row" style="margin-top:12px">
+            <label class="cfg-switch"><input type="checkbox" id="general-auto-review"><span class="cfg-switch-track"></span></label>
+            <div>
+              <div class="cfg-auto-apply-title">Auto review &amp; docs</div>
+              <div class="cfg-hint" style="margin-top:3px">On implementation tasks: auto code-review + changelog + session note.</div>
+            </div>
+          </div>
+          <div class="cfg-auto-apply-row" style="margin-top:12px">
+            <label class="cfg-switch"><input type="checkbox" id="general-defence"><span class="cfg-switch-track"></span></label>
+            <div>
+              <div class="cfg-auto-apply-title">Block prompt-injection</div>
+              <div class="cfg-hint" style="margin-top:3px">Refuse messages with critical injection patterns <em>(applies on restart)</em>.</div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Providers tab -->
