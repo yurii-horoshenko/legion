@@ -10,10 +10,11 @@ const path = require("path");
 const [,, cmd, ...args] = process.argv;
 
 const COMMANDS = {
-  web:   cmdWeb,
-  start: cmdWeb,
-  ask:   cmdAsk,
-  help:  cmdHelp,
+  web:    cmdWeb,
+  start:  cmdWeb,
+  ask:    cmdAsk,
+  doctor: cmdDoctor,
+  help:   cmdHelp,
 };
 
 const fn = COMMANDS[cmd];
@@ -43,6 +44,7 @@ function cmdHelp() {
     web        Start the Legion web portal
     start      Alias for web
     ask        Start an interactive session with an agent
+    doctor     Check DB ↔ disk integrity of agents and skills
     help       Show this help
 
   Options (for web / start):
@@ -55,6 +57,81 @@ function cmdHelp() {
     legion ask product-manager
     legion ask "Product Manager"
 `);
+}
+
+// ── Doctor: DB ↔ disk integrity check ──────────────────────────────────────
+
+function cmdDoctor() {
+  const os = require("os");
+  const configDir = path.resolve(__dirname, "..", ".config");
+  const db = require("../lib/db")(configDir);
+  const io = require("../lib/io")(configDir, db);
+  const { decodeSkillId } = require("../lib/agents-fs");
+
+  const projects  = io.readProjects();
+  const agentsMap = db.readPAgents();
+  let issues = 0;
+  const warn = msg => { issues++; console.log(`    ⚠ ${msg}`); };
+
+  console.log("\n  Legion Doctor — checking agents and skills\n");
+  for (const p of projects) {
+    console.log(`  ▸ ${p.name} — ${p.path || "(no path)"}`);
+    if (!p.path || !fs.existsSync(p.path)) { warn("project path does not exist on disk"); continue; }
+
+    const dbAgents = agentsMap[p.id] || [];
+    const dirBase  = path.join(p.path, ".legion", "agents");
+    const dirAgents = fs.existsSync(dirBase)
+      ? fs.readdirSync(dirBase).filter(d => { try { return fs.statSync(path.join(dirBase, d)).isDirectory(); } catch { return false; } })
+      : [];
+
+    // DB ↔ .legion/agents folders
+    for (const a of dbAgents) if (!dirAgents.includes(a.id)) warn(`agent "${a.id}": in DB but no .legion/agents/ folder — re-add or remove it`);
+    for (const d of dirAgents) if (!dbAgents.find(a => a.id === d)) warn(`folder .legion/agents/${d}: no DB record (orphan) — delete or re-add the agent`);
+
+    // .claude/agents freshness + template stubs
+    for (const a of dbAgents) {
+      const agentDir = path.join(dirBase, a.id);
+      if (!fs.existsSync(agentDir)) continue;
+      const claudeMd = path.join(p.path, ".claude", "agents", a.id + ".md");
+      if (!fs.existsSync(claudeMd)) {
+        warn(`agent "${a.id}": .claude/agents/${a.id}.md missing — restart the server to regenerate`);
+      } else {
+        try {
+          const srcM = Math.max(...fs.readdirSync(agentDir).map(f => fs.statSync(path.join(agentDir, f)).mtimeMs));
+          if (fs.statSync(claudeMd).mtimeMs < srcM - 2000) warn(`agent "${a.id}": .claude/agents/${a.id}.md is stale — restart the server to regenerate`);
+        } catch {}
+      }
+      const ctxFile = path.join(agentDir, "CONTEXT.md");
+      try {
+        if (fs.existsSync(ctxFile) && fs.readFileSync(ctxFile, "utf8").includes("_Languages, frameworks")) {
+          warn(`agent "${a.id}": files are template stubs — run Auto-fill (Config tab) or wait for auto-init`);
+        }
+      } catch {}
+    }
+
+    // Assigned skills present locally or wired as MCP servers?
+    let mcpNames = new Set();
+    try {
+      const m = JSON.parse(fs.readFileSync(path.join(p.path, ".mcp.json"), "utf8"));
+      mcpNames = new Set(Object.keys(m.mcpServers || {}));
+    } catch {}
+    const skillDirs = [path.join(p.path, ".claude", "skills"), path.join(os.homedir(), ".claude", "skills")];
+    const missing = new Set();
+    for (const a of dbAgents) {
+      for (const raw of a.skills || []) {
+        const id = decodeSkillId(raw);
+        const present = skillDirs.some(d => fs.existsSync(path.join(d, id, "SKILL.md")))
+          || mcpNames.has(id) || mcpNames.has(id.replace(/[^\w@/.-]+/g, "-"));
+        if (!present) missing.add(id);
+      }
+    }
+    if (missing.size) warn(`skills assigned but neither installed nor wired as MCP: ${[...missing].join(", ")}`);
+
+    console.log(`    agents: ${dbAgents.length} (db) / ${dirAgents.length} (disk) · mcp servers: ${mcpNames.size}`);
+  }
+
+  console.log(issues ? `\n  ${issues} issue(s) found.\n` : `\n  ✓ All checks passed.\n`);
+  process.exit(issues ? 1 : 0);
 }
 
 // ── Web server ─────────────────────────────────────────────────────────────
@@ -158,16 +235,8 @@ async function cmdAsk(args) {
       if (fs.existsSync(iFile)) identity = "\n\n## Identity\n\n" + fs.readFileSync(iFile, "utf8");
     }
 
-    const userSkillsDir = path.join(os.homedir(), ".claude", "skills");
-    const skillLines = (agent.skills || []).map(skillId => {
-      const md = path.join(userSkillsDir, skillId, "SKILL.md");
-      if (fs.existsSync(md)) {
-        const m = fs.readFileSync(md, "utf8").slice(0, 400).match(/^description:\s*(.+)/m);
-        if (m) return `**${skillId}** — ${m[1].trim().replace(/^["']|["']$/g, "")}`;
-      }
-      return `**${skillId}**`;
-    });
-    const skillsLine = skillLines.length ? skillLines.join(", ") : "None";
+    // Full skill instructions (project .claude/skills first, then ~/.claude/skills)
+    const skillsBlock = require("../lib/agents-fs").skillsPromptBlock(project, agent);
 
     // Orchestrators (agents with a pipeline) see all project issues, not just their label
     const pipeline = db.storeGet(pid, agent.id, "pipeline") || [];
@@ -192,9 +261,7 @@ async function cmdAsk(args) {
       : "";
 
     return `You are ${agent.name}. ${agent.role || ""}
-
-**Skills:** ${skillsLine}
-${identity}${linearCtx}${subAgentCtx}${fileAccessBlock}${linearFormatBlock}`;
+${skillsBlock}${identity}${linearCtx}${subAgentCtx}${fileAccessBlock}${linearFormatBlock}`;
   }
 
   // ── Linear context for this agent's label ─────────────────────────────────

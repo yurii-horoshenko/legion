@@ -1,7 +1,7 @@
 // ── Analyze view ───────────────────────────────────────────────────────────
 
 import { S, PROJECTS, LEGION_CONFIG, CATALOG_AGENTS } from '../modules/state.js';
-import { $, esc } from '../modules/utils.js';
+import { $, esc, skillPopBadge, applyAssignResult } from '../modules/utils.js';
 import { storePost, loadProjectAgents } from '../modules/api.js';
 import { showView } from './dashboard.js';
 import { renderTree } from './sidebar.js';
@@ -327,6 +327,26 @@ export async function runAnalyze() {
 
 // ── Skill matching for all project agents ────────────────────────────────────
 
+// Assign a recommended skill: the backend installs it locally (when the catalog
+// provides a runnable command) and links it to the agent's SKILLS.md.
+async function assignSkill(agentId, s) {
+  if (!s) return { ok: false };
+  try {
+    const r = await fetch(`/api/projects/${S.projectId}/agents/${agentId}/skills/${encodeURIComponent(s.name)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ install: s.install || '', type: s.type || '', source: s.source || '' }),
+    });
+    if (!r.ok) return { ok: false };
+    const d = await r.json().catch(() => ({}));
+    return { ok: true, install: d.install };
+  } catch { return { ok: false }; }
+}
+
+// Count of results needing attention (manual setup or failed install)
+const countWarn = results =>
+  results.filter(r => !r.ok || ['manual', 'failed'].includes(r.install?.status)).length;
+
 async function runSkillMatching(btn, container) {
   const agents = projectAgents();
   if (!agents.length) {
@@ -359,12 +379,13 @@ async function runSkillMatching(btn, container) {
     grid.appendChild(card);
   }
 
-  // Run suggest-skills per agent sequentially to avoid rate limits
-  for (const agent of agents) {
+  // Suggest skills with limited concurrency: parallel for speed, capped to
+  // stay under AI-provider rate limits
+  const suggestOne = agent => {
     const statusEl = container.querySelector(`#sk-status-${agent.id}`);
     const listEl   = container.querySelector(`#sk-list-${agent.id}`);
 
-    await new Promise(resolve => {
+    return new Promise(resolve => {
       const es = new EventSource(`/api/projects/${S.projectId}/agents/${agent.id}/suggest-skills`);
 
       es.onmessage = e => {
@@ -395,11 +416,14 @@ async function runSkillMatching(btn, container) {
               headRight.appendChild(assignAllBtn);
               assignAllBtn.addEventListener('click', async () => {
                 assignAllBtn.disabled = true; assignAllBtn.textContent = 'Assigning…';
-                await Promise.all(skills.map(s =>
-                  fetch(`/api/projects/${S.projectId}/agents/${agent.id}/skills/${encodeURIComponent(s.name)}`, { method: 'POST' })
-                ));
-                assignAllBtn.textContent = '✓ Done';
-                listEl?.querySelectorAll('.btn-assign-one-skill').forEach(b => { b.textContent = '✓'; b.disabled = true; });
+                const results = await Promise.all(skills.map(s => assignSkill(agent.id, s)));
+                const warn = countWarn(results);
+                assignAllBtn.textContent = warn ? `✓ Done (${warn} ⚠)` : '✓ Done';
+                assignAllBtn.title = warn ? 'Some skills need manual setup — see per-skill buttons' : '';
+                listEl?.querySelectorAll('.btn-assign-one-skill').forEach((b, i) => {
+                  b.disabled = true;
+                  applyAssignResult(b, results[i] || { ok: false });
+                });
               });
             }
 
@@ -407,13 +431,14 @@ async function runSkillMatching(btn, container) {
             if (listEl) {
               listEl.innerHTML = `
                 <div class="analyze-skills-chips">
-                  ${skills.map(s => `
+                  ${skills.map((s, i) => `
                     <div class="analyze-skill-chip">
                       <div class="analyze-skill-chip-top">
                         <span class="sk-type-icon">${s.type === 'mcp' ? '🔌' : '⚡'}</span>
                         <span class="analyze-skill-name">${esc(s.name)}</span>
                         ${s.source ? `<span class="analyze-skill-source">${esc(s.source)}</span>` : ''}
-                        <button class="btn-assign-one-skill" data-agent="${esc(agent.id)}" data-skill="${esc(s.name)}">+ Assign</button>
+                        ${skillPopBadge(s)}
+                        <button class="btn-assign-one-skill" data-agent="${esc(agent.id)}" data-idx="${i}">+ Assign</button>
                       </div>
                       ${s.reason ? `<div class="analyze-skill-reason">${esc(s.reason)}</div>` : ''}
                       ${s.install ? `<code class="sk-install">${esc(s.install)}</code>` : ''}
@@ -422,9 +447,8 @@ async function runSkillMatching(btn, container) {
 
               listEl.querySelectorAll('.btn-assign-one-skill').forEach(b => {
                 b.addEventListener('click', async () => {
-                  b.textContent = '…'; b.disabled = true;
-                  const r = await fetch(`/api/projects/${S.projectId}/agents/${b.dataset.agent}/skills/${encodeURIComponent(b.dataset.skill)}`, { method: 'POST' });
-                  b.textContent = r.ok ? '✓' : '✗';
+                  b.textContent = '⏳'; b.disabled = true;
+                  applyAssignResult(b, await assignSkill(b.dataset.agent, skills[+b.dataset.idx]));
                 });
               });
             }
@@ -446,7 +470,12 @@ async function runSkillMatching(btn, container) {
         resolve();
       };
     });
-  }
+  };
+
+  const queue = [...agents];
+  await Promise.all(Array.from({ length: Math.min(3, queue.length) }, async () => {
+    for (let agent = queue.shift(); agent; agent = queue.shift()) await suggestOne(agent);
+  }));
 
   btn.disabled = false;
   btn.textContent = '✓ Done — run again?';
@@ -460,13 +489,12 @@ async function runSkillMatching(btn, container) {
   const applyAllBtn = applyAllWrap.querySelector('#btn-skills-apply-all');
   applyAllBtn.addEventListener('click', async () => {
     applyAllBtn.disabled = true; applyAllBtn.textContent = 'Applying all…';
+    let warn = 0;
     for (const [agentId, skills] of Object.entries(allResults)) {
-      await Promise.all(skills.map(s =>
-        fetch(`/api/projects/${S.projectId}/agents/${agentId}/skills/${encodeURIComponent(s.name)}`, { method: 'POST' })
-      ));
+      warn += countWarn(await Promise.all(skills.map(s => assignSkill(agentId, s))));
     }
-    container.querySelectorAll('.btn-assign-one-skill').forEach(b => { b.textContent = '✓'; b.disabled = true; });
+    container.querySelectorAll('.btn-assign-one-skill').forEach(b => { if (b.textContent === '+ Assign') b.textContent = '✓'; b.disabled = true; });
     container.querySelectorAll('.btn-analyze-agent-assign-all').forEach(b => { b.textContent = '✓ Done'; b.disabled = true; });
-    applyAllBtn.textContent = '✓ All Skills Applied';
+    applyAllBtn.textContent = warn ? `✓ Applied (${warn} need manual setup)` : '✓ All Skills Applied';
   });
 }

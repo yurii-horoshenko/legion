@@ -566,6 +566,13 @@
   color: var(--text-3); text-transform: uppercase;
   white-space: nowrap; flex-shrink: 0;
 }
+.sk-pop {
+  font-size: 10px; font-family: var(--mono);
+  padding: 1px 5px; border-radius: 3px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  color: var(--warning, #d97706);
+  white-space: nowrap; flex-shrink: 0;
+}
 .analyze-skill-reason {
   font-size: 11px; color: var(--text-3); line-height: 1.45; padding-left: 20px;
 }

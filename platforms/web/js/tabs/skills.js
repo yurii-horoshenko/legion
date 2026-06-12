@@ -1,7 +1,7 @@
 // ── Skills tab ─────────────────────────────────────────────────────────────
 
 import { S } from '../modules/state.js';
-import { $, esc } from '../modules/utils.js';
+import { $, esc, skillPopBadge, applyAssignResult } from '../modules/utils.js';
 import { tabDescHtml } from '../modules/utils.js';
 import i18n from '../i18n.js';
 
@@ -181,26 +181,40 @@ export async function renderSkills(a) {
             <button class="sk-assign-all-btn" id="sk-assign-all">⚡ Assign All</button>
           </div>
           <div class="analyze-skills-chips">
-            ${r.skills.map(s => `
+            ${r.skills.map((s, i) => `
               <div class="analyze-skill-chip">
                 <div class="analyze-skill-chip-top">
                   <span class="sk-type-icon">${TYPE_ICONS[s.type] || '⚡'}</span>
                   <span class="analyze-skill-name">${esc(s.name)}</span>
                   ${s.source ? `<span class="analyze-skill-source">${esc(SOURCE_LABELS[s.source] || s.source)}</span>` : ''}
+                  ${skillPopBadge(s)}
                   ${s.url ? `<a class="sk-link" href="${esc(s.url)}" target="_blank">↗</a>` : ''}
-                  <button class="btn-assign-one-skill sk-card-assign" data-skill="${esc(s.name)}">+ Assign</button>
+                  <button class="btn-assign-one-skill sk-card-assign" data-idx="${i}">+ Assign</button>
                 </div>
                 ${s.reason ? `<div class="analyze-skill-reason">${esc(s.reason)}</div>` : ''}
                 ${s.install ? `<code class="sk-install">${esc(s.install)}</code>` : ''}
               </div>`).join('')}
           </div>`;
 
+        // Assign = install locally (backend runs the catalog install command
+        // when possible) + link to the agent
+        const postSkill = s => fetch(`/api/projects/${S.projectId}/agents/${a.id}/skills/${encodeURIComponent(s.name)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ install: s.install || '', type: s.type || '', source: s.source || '' }),
+        });
+
         results.querySelectorAll('.sk-card-assign').forEach(assignBtn => {
           assignBtn.addEventListener('click', async () => {
-            assignBtn.textContent = '…'; assignBtn.disabled = true;
-            const res = await fetch(`/api/projects/${S.projectId}/agents/${a.id}/skills/${assignBtn.dataset.skill}`, { method: 'POST' });
-            if (res.ok) { const d = await res.json(); a.skills = d.skills; assignBtn.textContent = '✓'; refreshSkillLists(); }
-            else { assignBtn.textContent = '✗'; assignBtn.disabled = false; }
+            assignBtn.textContent = '⏳'; assignBtn.disabled = true;
+            try {
+              const res = await postSkill(r.skills[+assignBtn.dataset.idx]);
+              if (!res.ok) { applyAssignResult(assignBtn, { ok: false }); return; }
+              const d = await res.json();
+              a.skills = d.skills;
+              applyAssignResult(assignBtn, { ok: true, install: d.install });
+              refreshSkillLists();
+            } catch { applyAssignResult(assignBtn, { ok: false }); }
           });
         });
 
@@ -208,9 +222,7 @@ export async function renderSkills(a) {
           const allBtn = $('#sk-assign-all');
           allBtn.textContent = '…'; allBtn.disabled = true;
           results.querySelectorAll('.sk-card-assign').forEach(b => { b.disabled = true; });
-          const responses = await Promise.all(r.skills.map(s =>
-            fetch(`/api/projects/${S.projectId}/agents/${a.id}/skills/${s.name}`, { method: 'POST' })
-          ));
+          const responses = await Promise.all(r.skills.map(s => postSkill(s)));
           const last = responses.findLast(r => r.ok);
           if (last) { const d = await last.json(); a.skills = d.skills; }
           results.querySelectorAll('.sk-card-assign').forEach(b => { b.textContent = '✓'; });

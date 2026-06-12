@@ -5,7 +5,189 @@ const path   = require("path");
 const crypto = require("crypto");
 
 module.exports = function createAgentRoutes(ctx) {
-  const { io, http, agentFs, port, db, ws, stats } = ctx;
+  const { io, http, ai, agentFs, port, db, ws, stats } = ctx;
+
+  // ── Agent initialization core ──────────────────────────────────────────────
+  // AI-populates all agent MD files. Used by the SSE /initialize endpoint and
+  // by the auto-init queue. Throws on error; returns null when aborted.
+  async function initializeAgentCore(projectId, agentId, progress = () => {}, isAborted = () => false) {
+    const project = io.readProjects().find(p => p.id === projectId);
+    if (!project) throw new Error("Project not found");
+
+    const cfg = io.readConfig();
+    if (!cfg.defaultModelId) throw new Error("No default model configured");
+    const resolved = http.resolveModel(io.readModels(), io.readProviders(), cfg.defaultModelId);
+    if (!resolved) throw new Error("Model not found or provider not configured");
+    const { model, provider } = resolved;
+
+    const allAgents = io.readPAgents()[projectId] || [];
+    const agent = allAgents.find(a => a.id === agentId);
+    if (!agent) throw new Error("Agent not found");
+
+    // ── Load agent catalog definition ────────────────────────────────────
+    progress("Reading agent catalog definition…");
+    let agentDescription = agent.description || agent.role || "";
+    let agentTools = agent.tools || "Read, Write, Edit";
+    if (agent.catalogId) {
+      const catalogFile = path.join(ctx.webRoot, "data", "agents-catalog.json");
+      if (fs.existsSync(catalogFile)) {
+        try {
+          const catalog = JSON.parse(fs.readFileSync(catalogFile, "utf8"));
+          const entry = catalog.find(a => a.id === agent.catalogId);
+          if (entry) {
+            agentDescription = entry.description || agentDescription;
+            if (entry.tools) agentTools = entry.tools;
+          }
+        } catch {}
+      }
+      // Also try reading the catalog MD file directly for full content
+      const catalogMdCandidates = [
+        path.resolve(ctx.webRoot, "../../core/agents/catalog", agent.catalogId.replace(/^catalog\//, "") + ".md"),
+        path.resolve(ctx.webRoot, "../../core/agents", agent.catalogId + ".md"),
+      ];
+      for (const p of catalogMdCandidates) {
+        if (fs.existsSync(p)) {
+          try { agentDescription = fs.readFileSync(p, "utf8").slice(0, 3000); } catch {}
+          break;
+        }
+      }
+    }
+
+    // ── Scan project docs ────────────────────────────────────────────────
+    progress("Scanning project documentation…");
+    const docParts = [];
+    if (project.path) {
+      const candidates = ["README.md", "readme.md", "CLAUDE.md", "package.json", "pyproject.toml"];
+      for (const f of candidates) {
+        const fp = path.join(project.path, f);
+        if (fs.existsSync(fp)) {
+          try { docParts.push(`### ${f}\n${fs.readFileSync(fp, "utf8").slice(0, 2000)}`); } catch {}
+        }
+      }
+      // Also check .legion/LEGION.md for project agent context
+      const legionMd = path.join(project.path, ".legion", "LEGION.md");
+      if (fs.existsSync(legionMd)) {
+        try { docParts.push(`### .legion/LEGION.md\n${fs.readFileSync(legionMd, "utf8").slice(0, 1500)}`); } catch {}
+      }
+      // Check docs/ directory
+      const docsDir = path.join(project.path, "docs");
+      if (fs.existsSync(docsDir)) {
+        try {
+          const files = fs.readdirSync(docsDir).filter(f => /\.(md|txt)$/i.test(f)).slice(0, 3);
+          for (const f of files) {
+            try { docParts.push(`### docs/${f}\n${fs.readFileSync(path.join(docsDir, f), "utf8").slice(0, 1500)}`); } catch {}
+          }
+        } catch {}
+      }
+    }
+    const projectDocs = docParts.length ? docParts.join("\n\n") : "No documentation found.";
+    progress(`Loaded ${docParts.length} documentation file(s)`);
+
+    // ── Build existing agents list ────────────────────────────────────────
+    const existingAgents = allAgents
+      .filter(a => a.id !== agentId)
+      .map(a => `- ${a.name}: ${a.role || a.description || ""}`)
+      .join("\n") || "None yet";
+
+    // ── Load prompt template ─────────────────────────────────────────────
+    progress("Building initialization prompt…");
+    const tplPath = path.resolve(ctx.webRoot, "../../core/prompts/agent-init.md");
+    if (!fs.existsSync(tplPath)) throw new Error("agent-init.md prompt template not found");
+    const tpl = fs.readFileSync(tplPath, "utf8");
+
+    const agentSkills = (() => {
+      const agentDir = path.join(project.path || "", ".legion", "agents", agentId);
+      const skillsFile = path.join(agentDir, "SKILLS.md");
+      if (fs.existsSync(skillsFile)) {
+        const content = fs.readFileSync(skillsFile, "utf8");
+        const skills = content.match(/^### (.+)$/gm);
+        return skills ? skills.map(s => s.replace("### ", "")).join(", ") : "None";
+      }
+      return "None";
+    })();
+
+    const prompt = tpl
+      .replace("{{agent_name}}",        agent.name || agentId)
+      .replace("{{agent_role}}",        agent.role || agent.description || "")
+      .replace("{{agent_description}}", agentDescription)
+      .replace("{{agent_skills}}",      agentSkills)
+      .replace("{{agent_tools}}",       agentTools)
+      .replace("{{project_name}}",      project.name || "")
+      .replace("{{project_description}}", project.description || "No description")
+      .replace("{{project_docs}}",      projectDocs)
+      .replace("{{existing_agents}}",   existingAgents);
+
+    // ── Call AI ──────────────────────────────────────────────────────────
+    progress("Generating agent files with AI…");
+    if (isAborted()) return null;
+    const raw = await ai.callAI(model, provider, prompt);
+    if (isAborted()) return null;
+
+    // ── Parse and write files ────────────────────────────────────────────
+    progress("Parsing AI response…");
+    let files;
+    try { files = http.parseAIJson(raw); } catch { throw new Error("AI returned invalid JSON"); }
+
+    const allowed = ["CONTEXT.md", "USER.md", "MEMORY.md", "IDENTITY.md", "SOUL.md", "SKILLS.md"];
+    const agentDir = path.join(project.path || "", ".legion", "agents", agentId);
+    fs.mkdirSync(agentDir, { recursive: true });
+
+    const written = [];
+    for (const filename of allowed) {
+      if (files[filename]) {
+        const filePath = path.join(agentDir, filename);
+        fs.writeFileSync(filePath, files[filename]);
+        written.push(filename);
+        progress(`Wrote ${filename}`);
+      }
+    }
+
+    agentFs.buildClaudeAgentMd(project, agentId);
+    progress(`Done — wrote ${written.length} files: ${written.join(", ")}`);
+    return { ok: true, files: written };
+  }
+
+  // ── Auto-initialization queue ──────────────────────────────────────────────
+  // New agents get their MD files AI-populated in the background — serially,
+  // with retries — so the user never has to click Auto-fill manually.
+  const initQueue = [];
+  let initRunning = false;
+
+  function needsInit(project, agentId) {
+    const f = path.join(project.path || "", ".legion", "agents", agentId, "CONTEXT.md");
+    try { return !fs.existsSync(f) || fs.readFileSync(f, "utf8").includes("_Languages, frameworks"); }
+    catch { return true; }
+  }
+
+  function enqueueInit(projectId, agentId) {
+    if (initQueue.some(j => j.projectId === projectId && j.agentId === agentId)) return;
+    initQueue.push({ projectId, agentId, attempts: 0 });
+    runInitQueue();
+  }
+
+  async function runInitQueue() {
+    if (initRunning) return;
+    initRunning = true;
+    while (initQueue.length) {
+      const job = initQueue.shift();
+      try {
+        await initializeAgentCore(job.projectId, job.agentId);
+        console.log(`  [agent-init] auto-initialized "${job.agentId}"`);
+        ws?.broadcast("agent:initialized", { pid: job.projectId, aid: job.agentId });
+      } catch (err) {
+        job.attempts++;
+        if (job.attempts < 3) {
+          console.log(`  [agent-init] "${job.agentId}" failed (${err.message}) — retry ${job.attempts}/2 in 20s`);
+          await new Promise(r => setTimeout(r, 20000));
+          initQueue.push(job);
+        } else {
+          console.error(`  [agent-init] "${job.agentId}" failed after 3 attempts: ${err.message}`);
+        }
+      }
+      await new Promise(r => setTimeout(r, 2000)); // gentle pacing between provider calls
+    }
+    initRunning = false;
+  }
 
   return async function handle(urlPath, method, req, res, body) {
 
@@ -44,7 +226,11 @@ module.exports = function createAgentRoutes(ctx) {
         if (!agent.linearLabelName) agent.linearLabelName = agent.name || agent.id;
         if (agent.allowedTools === undefined) agent.allowedTools = "Read,LS,Glob,Grep";
         map[projectId].push(agent);
-        if (project) agentFs.writeAgentFile(project, agent);
+        if (project) {
+          agentFs.writeAgentFile(project, agent);
+          // AI-populate the new agent's MD files in the background — no manual Auto-fill needed
+          if (needsInit(project, agent.id)) enqueueInit(projectId, agent.id);
+        }
       } else {
         map[projectId][existing] = { ...map[projectId][existing], ...agent };
         // Update agent.md frontmatter model field
@@ -276,141 +462,8 @@ module.exports = function createAgentRoutes(ctx) {
       const { progress, done, fail, isAborted } = http.createSSEHandler(res, req, "agent-init");
 
       try {
-        const project = io.readProjects().find(p => p.id === projectId);
-        if (!project) return fail("Project not found");
-
-        const cfg = io.readConfig();
-        if (!cfg.defaultModelId) return fail("No default model configured");
-        const resolved = http.resolveModel(io.readModels(), io.readProviders(), cfg.defaultModelId);
-        if (!resolved) return fail("Model not found or provider not configured");
-        const { model, provider } = resolved;
-
-        const allAgents = io.readPAgents()[projectId] || [];
-        const agent = allAgents.find(a => a.id === agentId);
-        if (!agent) return fail("Agent not found");
-
-        // ── Load agent catalog definition ────────────────────────────────────
-        progress("Reading agent catalog definition…");
-        let agentDescription = agent.description || agent.role || "";
-        let agentTools = agent.tools || "Read, Write, Edit";
-        if (agent.catalogId) {
-          const catalogFile = path.join(ctx.webRoot, "data", "agents-catalog.json");
-          if (fs.existsSync(catalogFile)) {
-            try {
-              const catalog = JSON.parse(fs.readFileSync(catalogFile, "utf8"));
-              const entry = catalog.find(a => a.id === agent.catalogId);
-              if (entry) {
-                agentDescription = entry.description || agentDescription;
-                if (entry.tools) agentTools = entry.tools;
-              }
-            } catch {}
-          }
-          // Also try reading the catalog MD file directly for full content
-          const catalogMdCandidates = [
-            path.resolve(ctx.webRoot, "../../core/agents/catalog", agent.catalogId.replace(/^catalog\//, "") + ".md"),
-            path.resolve(ctx.webRoot, "../../core/agents", agent.catalogId + ".md"),
-          ];
-          for (const p of catalogMdCandidates) {
-            if (fs.existsSync(p)) {
-              try { agentDescription = fs.readFileSync(p, "utf8").slice(0, 3000); } catch {}
-              break;
-            }
-          }
-        }
-
-        // ── Scan project docs ────────────────────────────────────────────────
-        progress("Scanning project documentation…");
-        const docParts = [];
-        if (project.path) {
-          const candidates = ["README.md", "readme.md", "CLAUDE.md", "package.json", "pyproject.toml"];
-          for (const f of candidates) {
-            const fp = path.join(project.path, f);
-            if (fs.existsSync(fp)) {
-              try { docParts.push(`### ${f}\n${fs.readFileSync(fp, "utf8").slice(0, 2000)}`); } catch {}
-            }
-          }
-          // Also check .legion/LEGION.md for project agent context
-          const legionMd = path.join(project.path, ".legion", "LEGION.md");
-          if (fs.existsSync(legionMd)) {
-            try { docParts.push(`### .legion/LEGION.md\n${fs.readFileSync(legionMd, "utf8").slice(0, 1500)}`); } catch {}
-          }
-          // Check docs/ directory
-          const docsDir = path.join(project.path, "docs");
-          if (fs.existsSync(docsDir)) {
-            try {
-              const files = fs.readdirSync(docsDir).filter(f => /\.(md|txt)$/i.test(f)).slice(0, 3);
-              for (const f of files) {
-                try { docParts.push(`### docs/${f}\n${fs.readFileSync(path.join(docsDir, f), "utf8").slice(0, 1500)}`); } catch {}
-              }
-            } catch {}
-          }
-        }
-        const projectDocs = docParts.length ? docParts.join("\n\n") : "No documentation found.";
-        progress(`Loaded ${docParts.length} documentation file(s)`);
-
-        // ── Build existing agents list ────────────────────────────────────────
-        const existingAgents = allAgents
-          .filter(a => a.id !== agentId)
-          .map(a => `- ${a.name}: ${a.role || a.description || ""}`)
-          .join("\n") || "None yet";
-
-        // ── Load prompt template ─────────────────────────────────────────────
-        progress("Building initialization prompt…");
-        const tplPath = path.resolve(ctx.webRoot, "../../core/prompts/agent-init.md");
-        if (!fs.existsSync(tplPath)) return fail("agent-init.md prompt template not found");
-        const tpl = fs.readFileSync(tplPath, "utf8");
-
-        const agentSkills = (() => {
-          const agentDir = path.join(project.path || "", ".legion", "agents", agentId);
-          const skillsFile = path.join(agentDir, "SKILLS.md");
-          if (fs.existsSync(skillsFile)) {
-            const content = fs.readFileSync(skillsFile, "utf8");
-            const skills = content.match(/^### (.+)$/gm);
-            return skills ? skills.map(s => s.replace("### ", "")).join(", ") : "None";
-          }
-          return "None";
-        })();
-
-        const prompt = tpl
-          .replace("{{agent_name}}",        agent.name || agentId)
-          .replace("{{agent_role}}",        agent.role || agent.description || "")
-          .replace("{{agent_description}}", agentDescription)
-          .replace("{{agent_skills}}",      agentSkills)
-          .replace("{{agent_tools}}",       agentTools)
-          .replace("{{project_name}}",      project.name || "")
-          .replace("{{project_description}}", project.description || "No description")
-          .replace("{{project_docs}}",      projectDocs)
-          .replace("{{existing_agents}}",   existingAgents);
-
-        // ── Call AI ──────────────────────────────────────────────────────────
-        progress("Generating agent files with AI…");
-        if (isAborted()) return;
-        const raw = await ai.callAI(model, provider, prompt);
-        if (isAborted()) return;
-
-        // ── Parse and write files ────────────────────────────────────────────
-        progress("Parsing AI response…");
-        let files;
-        try { files = http.parseAIJson(raw); } catch { return fail("AI returned invalid JSON"); }
-
-        const allowed = ["CONTEXT.md", "USER.md", "MEMORY.md", "IDENTITY.md", "SOUL.md", "SKILLS.md"];
-        const agentDir = path.join(project.path || "", ".legion", "agents", agentId);
-        fs.mkdirSync(agentDir, { recursive: true });
-
-        const written = [];
-        for (const filename of allowed) {
-          if (files[filename]) {
-            const filePath = path.join(agentDir, filename);
-            fs.writeFileSync(filePath, files[filename]);
-            written.push(filename);
-            progress(`Wrote ${filename}`);
-          }
-        }
-
-        agentFs.buildClaudeAgentMd(project, agentId);
-        progress(`Done — wrote ${written.length} files: ${written.join(", ")}`);
-        done({ ok: true, files: written });
-
+        const result = await initializeAgentCore(projectId, agentId, progress, isAborted);
+        if (result) done(result);
       } catch (err) {
         console.error("[agent-init]", err.message);
         fail(err.message);

@@ -16,6 +16,25 @@ export function groupBy(arr, key) {
 
 export const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+// Popularity badge for a skill/MCP search result: ★ 1.2k (GitHub stars), ↓ 530 (downloads/uses)
+const METRIC_ICONS  = { stars: '★', downloads: '↓', uses: '↓' };
+const METRIC_TITLES = { stars: 'GitHub stars', downloads: 'downloads', uses: 'installs' };
+const fmtCount = n => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, '') + 'k' : String(n);
+export const skillPopBadge = s => s?.stars
+  ? `<span class="sk-pop" title="${METRIC_TITLES[s.metric] || 'popularity'}">${METRIC_ICONS[s.metric] || '★'} ${fmtCount(s.stars)}</span>`
+  : '';
+
+// Honest assign-button feedback: ✓ installed/linked, ⚠ needs manual setup, ✗ failed.
+// `r` is { ok, install } from the assign endpoint.
+export function applyAssignResult(btn, r) {
+  const st = r?.install?.status;
+  if (!r?.ok) { btn.textContent = '✗'; btn.title = 'Request failed'; btn.disabled = false; return false; }
+  if (st === 'failed') { btn.textContent = '✗'; btn.title = 'Install failed: ' + (r.install.message || 'unknown error'); return false; }
+  if (st === 'manual') { btn.textContent = '⚠'; btn.title = 'Linked, but requires manual install: ' + (r.install.message || ''); return true; }
+  btn.textContent = '✓'; btn.title = st === 'mcp-wired' ? r.install.message : '';
+  return true;
+}
+
 export function relTime(iso) {
   if (!iso) return '';
   const diff = Date.now() - new Date(iso).getTime();

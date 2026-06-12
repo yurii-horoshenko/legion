@@ -17,7 +17,7 @@ const INTRO_TTL_MS = 60 * 60 * 1000; // 1 hour
 const DONE_STATES = new Set(["done", "cancelled", "duplicate"]);
 
 module.exports = function createChatRoutes(ctx) {
-  const { io, http, ai, db, ws, memory, compactor, defence, hooks, capture, stats, runner, agentLoop } = ctx;
+  const { io, http, ai, db, ws, memory, compactor, defence, hooks, capture, stats, runner, agentLoop, agentFs } = ctx;
   const EV = hooks?.EVENTS || {};
 
   // Normalize externally-sourced content (Linear bodies, comments) before it
@@ -439,7 +439,8 @@ module.exports = function createChatRoutes(ctx) {
       // of the shared task file — instead of the entire growing document, which
       // otherwise blows up tokens as more agents append to it.
       const subMem        = await recallBlock(pid, task);
-      const subSystem     = `You are ${subAgent.name}. ${subAgent.role || ""}${ai.langDirective(lang) || ""}${subIdentity}${subFileAccess}${subMem}`;
+      const subSkills     = agentFs.skillsPromptBlock(project, subAgent);
+      const subSystem     = `You are ${subAgent.name}. ${subAgent.role || ""}${ai.langDirective(lang) || ""}${subIdentity}${subSkills}${subFileAccess}${subMem}`;
       const full          = readTaskFile(taskFile);
       const excerpt       = full.length > 6000 ? `${full.slice(0, 1500)}\n…(trimmed)…\n${full.slice(-4000)}` : full;
       const taskCtx       = taskFile ? `\n\n## Task Document (excerpt)\n\n${excerpt}` : "";
@@ -493,9 +494,11 @@ module.exports = function createChatRoutes(ctx) {
     const linearFormat = agent.linearEnabled ? buildLinearFormatBlock() : "";
     const memBlock  = depth === 0 ? await recallBlock(pid, message) : "";
 
+    const skillsBlock = agentFs.skillsPromptBlock(project, agent);
+
     if (!subAgents.length) {
       const fileAccess = buildFileAccessBlock(agent.allowedTools, project?.path);
-      const sp   = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(lang) || ""}${identity}${allIssues}${linearFormat}${fileAccess}${memBlock}${historyCtx}`;
+      const sp   = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(lang) || ""}${identity}${skillsBlock}${allIssues}${linearFormat}${fileAccess}${memBlock}${historyCtx}`;
       const msgs = [{ role: "user", content: message }];
       const leafCandidates = ai.buildFailoverCandidates({ model: modelObj, provider }, allModels, allProviders);
       return await ai.callAIMessagesResilient(leafCandidates, sp, msgs, { allowedTools: agent.allowedTools || "" });
@@ -509,7 +512,7 @@ module.exports = function createChatRoutes(ctx) {
       .replace("{{agent_role}}",      agent.role || agent.description || "General-purpose agent")
       .replace("{{sub_agents_list}}", subAgentsList)
       .replace("{{lang_directive}}",  ai.langDirective(lang) || "")
-      + identity + linearFormat + fileAccess + allIssues + memBlock + historyCtx;
+      + identity + skillsBlock + linearFormat + fileAccess + allIssues + memBlock + historyCtx;
 
     sse({ type: "progress", text: depth === 0 ? "Analyzing request…" : `${agent.name} analyzing…` });
     log.info("chat", `orchestrator ${agent.name} analyzing (${subAgents.length} sub-agents, depth=${depth})`);
@@ -857,6 +860,7 @@ module.exports = function createChatRoutes(ctx) {
       }
 
       const identity     = loadIdentity(project, aid);
+      const skillsBlock  = agentFs.skillsPromptBlock(project, agent);
       const linearCtx    = await buildLinearContext(project, agent);
       const linearFormat = agent.linearEnabled ? buildLinearFormatBlock() : "";
       const fileAccess   = buildFileAccessBlock(agent.allowedTools, project?.path);
@@ -864,7 +868,7 @@ module.exports = function createChatRoutes(ctx) {
       const rawHistory   = db?.getChatHistory(pid, aid) || [];
       const memBlock     = await recallBlock(pid, message.trim());
       const { summaryBlock, messages: history } = await compactHistory(pid, aid, rawHistory, candidates);
-      const systemPrompt = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(body.lang)}${identity}${linearCtx}${linearFormat}${fileAccess}${summaryBlock}${memBlock}`;
+      const systemPrompt = `You are ${agent.name}. ${agent.role || ""}${ai.langDirective(body.lang)}${identity}${skillsBlock}${linearCtx}${linearFormat}${fileAccess}${summaryBlock}${memBlock}`;
       const messages     = [...history, { role: "user", content: message.trim() }];
 
       try {

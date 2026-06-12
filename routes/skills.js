@@ -6,9 +6,15 @@ const os   = require("os");
 
 // ── Catalog search helpers ─────────────────────────────────────────────────
 
-// Quality floor for GitHub-derived sources: drop repos below this star count
-// unless that would leave fewer than 3 results.
-const MIN_STARS = 3;
+// Popularity floor for metric-bearing sources (stars / downloads / uses).
+const MIN_POPULARITY = 100; // skills below this many stars/downloads/uses are never shown or suggested
+
+// In-memory cache for live catalog searches, keyed by query. Agents in the same
+// group build identical queries, so a multi-agent matching run hits each catalog
+// once instead of 9 HTTP searches per agent. Stores the in-flight promise, which
+// also dedupes concurrent requests for the same query.
+const SEARCH_CACHE_TTL_MS = 10 * 60 * 1000;
+const searchCache = new Map(); // query → { ts, promise }
 
 // metric: what the numeric `stars` field actually measures for this source —
 // "stars" (GitHub), "downloads" (aitmpl), "uses" (Smithery useCount).
@@ -133,16 +139,17 @@ function scoreMatch(query, name, desc) {
 }
 
 // Rank results: relevance (scoreMatch) first, popularity metric as tiebreak.
-// With `floor: true` (GitHub-derived sources) drop entries below MIN_STARS,
-// unless fewer than 3 results would remain — then keep the best available.
+// With `floor: true` (metric-bearing sources) drop entries below MIN_POPULARITY —
+// low-traction skills are noise and are never shown or suggested. Curated
+// metric-less sources (anthropic-official, claude-plugins-official, mcp-registry,
+// glama) skip the floor: absence of a metric is not a quality signal there.
 function rankResults(query, items, { floor = false } = {}) {
   const ranked = items
     .map(it => ({ it, score: scoreMatch(query, it.name, it.description) }))
     .sort((a, b) => b.score - a.score || (b.it.stars || 0) - (a.it.stars || 0))
     .map(x => x.it);
   if (!floor) return ranked;
-  const kept = ranked.filter(it => (it.stars || 0) >= MIN_STARS);
-  return kept.length >= 3 ? kept : ranked.slice(0, 3);
+  return ranked.filter(it => (it.stars || 0) >= MIN_POPULARITY);
 }
 
 // ── Anthropic official skills (github.com/anthropics/skills) ──────────────
@@ -312,6 +319,36 @@ async function searchGithubTopics(http, query) {
   }
 }
 
+// ── MCP server wiring ───────────────────────────────────────────────────────
+// Claude Code reads {project}/.mcp.json natively and starts the listed servers,
+// so wiring an MCP "skill" there makes its tools available with zero manual setup.
+
+// Derive an .mcp.json entry from a catalog install command; null when the
+// command cannot run as a server (e.g. bare repo URLs).
+function mcpServerEntry(skillId, installCmd) {
+  const name = skillId.replace(/[^\w@/.-]+/g, "-");
+  // Smithery: `npx @smithery/cli install <qualifiedName>` → run via the same CLI
+  let m = installCmd.match(/^npx @smithery\/cli install (\S+)/);
+  if (m) return { name, entry: { command: "npx", args: ["-y", "@smithery/cli", "run", m[1]] } };
+  // Official MCP registry: `npx <package> [...args]` is the server command itself
+  m = installCmd.match(/^npx (?!@smithery\/cli|skills |claude-code-templates)(.+)$/);
+  if (m) return { name, entry: { command: "npx", args: ["-y", ...m[1].trim().split(/\s+/)] } };
+  return null;
+}
+
+function wireMcpServer(projPath, skillId, installCmd) {
+  const derived = mcpServerEntry(skillId, installCmd);
+  if (!derived) return { status: "manual", message: installCmd };
+  const mcpPath = path.join(projPath, ".mcp.json");
+  let json = {};
+  try { if (fs.existsSync(mcpPath)) json = JSON.parse(fs.readFileSync(mcpPath, "utf8")); } catch {}
+  json.mcpServers = json.mcpServers || {};
+  if (json.mcpServers[derived.name]) return { status: "present" };
+  json.mcpServers[derived.name] = derived.entry;
+  fs.writeFileSync(mcpPath, JSON.stringify(json, null, 2) + "\n");
+  return { status: "mcp-wired", message: `"${derived.name}" added to .mcp.json — tools load automatically in Claude Code` };
+}
+
 // Deduplicate by lowercased name, keep highest-starred duplicate
 function dedup(items) {
   const seen = new Map();
@@ -352,7 +389,7 @@ function formatForPrompt(label, items) {
 }
 
 module.exports = function createSkillRoutes(ctx) {
-  const { io, http, ai, agentFs } = ctx;
+  const { io, http, ai, agentFs, exec } = ctx;
 
   return async function handle(urlPath, method, req, res, body) {
 
@@ -409,33 +446,44 @@ module.exports = function createSkillRoutes(ctx) {
         progress(`Searching catalogs for "${query}"…`);
 
         const cacheDir = path.resolve(ctx.webRoot, "../../.config/cache");
+        let cacheEntry = searchCache.get(query);
+        if (!cacheEntry || Date.now() - cacheEntry.ts > SEARCH_CACHE_TTL_MS) {
+          cacheEntry = {
+            ts: Date.now(),
+            promise: Promise.all([
+              searchAnthropicSkills(http, query, cacheDir),
+              searchSmithery(http, query),
+              searchSkillsSh(http, query),
+              searchSkillsMP(http, query),
+              searchClaudePluginsOfficial(http, query, cacheDir),
+              searchAitmpl(http, query, cacheDir),
+              searchMcpRegistry(http, query),
+              searchGlama(http, query),
+              searchGithubTopics(http, query),
+            ]),
+          };
+          searchCache.set(query, cacheEntry);
+        } else {
+          progress("Catalog results served from cache");
+        }
         const [
           anthropicResults, smitheryResults, rawSkillsSh, rawSkillsMp,
           officialPluginResults, aitmplResults, mcpRegistryResults, rawGlama, rawGhTopics,
-        ] = await Promise.all([
-          searchAnthropicSkills(http, query, cacheDir),
-          searchSmithery(http, query),
-          searchSkillsSh(http, query),
-          searchSkillsMP(http, query),
-          searchClaudePluginsOfficial(http, query, cacheDir),
-          searchAitmpl(http, query, cacheDir),
-          searchMcpRegistry(http, query),
-          searchGlama(http, query),
-          searchGithubTopics(http, query),
-        ]);
+        ] = await cacheEntry.promise;
 
-        // Relevance + popularity ranking; star floor for GitHub-derived sources.
-        // Curated tiers (anthropic-official, claude-plugins-official, mcp-registry)
-        // and aitmpl (pre-sorted by score+downloads) are exempt.
+        // Relevance + popularity ranking; popularity floor for every source that
+        // reports a metric (stars/downloads/uses). Curated metric-less tiers
+        // (anthropic-official, claude-plugins-official, mcp-registry, glama) are exempt.
         const skillsShResults = rankResults(query, rawSkillsSh, { floor: true });
         const ghTopicResults  = rankResults(query, rawGhTopics, { floor: true });
-        const skillsMpResults = rankResults(query, rawSkillsMp);
-        const smithery        = rankResults(query, smitheryResults);
+        const skillsMpResults = rankResults(query, rawSkillsMp, { floor: true });
+        const smithery        = rankResults(query, smitheryResults, { floor: true });
+        const aitmpl          = rankResults(query, aitmplResults, { floor: true });
         const glamaResults    = rankResults(query, rawGlama);
 
         const allResults = [
           // Curated sources first — order also drives prompt sections and dedup priority
-          anthropicResults, officialPluginResults, aitmplResults, mcpRegistryResults, glamaResults,
+          anthropicResults, officialPluginResults, aitmpl, mcpRegistryResults, glamaResults,
           smithery, skillsShResults, ghTopicResults, skillsMpResults,
         ];
         const totalFound = allResults.reduce((n, r) => n + r.length, 0);
@@ -444,7 +492,7 @@ module.exports = function createSkillRoutes(ctx) {
         const catalogSection = totalFound > 0
           ? formatForPrompt("Anthropic Official Skills (anthropics/skills)", anthropicResults) +
             formatForPrompt("Claude Plugins Official (Anthropic)", officialPluginResults) +
-            formatForPrompt("aitmpl (claude-code-templates)", aitmplResults) +
+            formatForPrompt("aitmpl (claude-code-templates)", aitmpl) +
             formatForPrompt("Official MCP Registry", mcpRegistryResults) +
             formatForPrompt("Glama (MCP servers)", glamaResults) +
             formatForPrompt("Smithery (MCP servers)", smithery) +
@@ -477,8 +525,12 @@ module.exports = function createSkillRoutes(ctx) {
             if (!sk.url     && match.url)     sk.url     = match.url;
             if (!sk.install && match.install) sk.install = match.install;
             if (!sk.source  && match.source)  sk.source  = match.source;
+            if (match.stars) { sk.stars = match.stars; sk.metric = match.metric; }
           }
         });
+
+        // Most popular first; curated metric-less entries keep prompt order at the end
+        (result.skills || []).sort((a, b) => (b.stars || 0) - (a.stars || 0));
 
         progress(`Selected ${result.skills?.length || 0} skill recommendations`);
         done(result);
@@ -522,14 +574,45 @@ module.exports = function createSkillRoutes(ctx) {
       return true;
     }
 
-    // POST /api/projects/:pid/agents/:aid/skills/:skillId — assign skill to agent
+    // POST /api/projects/:pid/agents/:aid/skills/:skillId — install (when the
+    // catalog provides a runnable command) and assign skill to agent
     if (urlPath.match(/^\/api\/projects\/[^/]+\/agents\/[^/]+\/skills\/[^/]+$/) && method === "POST") {
       const parts = urlPath.split("/");
-      const pid = parts[3], aid = parts[5], skillId = parts[7];
+      const pid = parts[3], aid = parts[5], skillId = decodeURIComponent(parts[7]);
       const map = io.readPAgents();
       const agents = map[pid] || [];
       const idx = agents.findIndex(a => a.id === aid);
       if (idx === -1) { http.json(res, 404, { error: "Agent not found" }); return true; }
+      const proj = io.readProjects().find(p => p.id === pid);
+
+      // Install locally before linking. Only `npx skills add …` and
+      // `npx claude-code-templates …` run non-interactively; MCP servers and
+      // /plugin installs need user-side setup and are reported as manual.
+      const installCmd = ((body && body.install) || "").trim();
+      const isInstalled = () => [
+        proj && path.join(proj.path, ".claude", "skills", skillId),
+        path.join(os.homedir(), ".claude", "skills", skillId),
+      ].filter(Boolean).some(p => fs.existsSync(p));
+
+      let install = { status: "none" };
+      if (isInstalled()) {
+        install = { status: "present" };
+      } else if (/^npx (skills add|claude-code-templates)/.test(installCmd)) {
+        install = await new Promise(resolve => {
+          exec(installCmd.replace(/^npx /, "npx -y "), { cwd: proj?.path || process.cwd(), timeout: 180000 }, (err, stdout, stderr) => {
+            if (err) resolve({ status: "failed", message: String(stderr || err.message).slice(-400) });
+            else resolve({ status: "installed", message: String(stdout).slice(-400) });
+          });
+        });
+        console.log(`  [skills] install "${skillId}" → ${install.status}`);
+        if (install.status === "installed" && !isInstalled()) install.status = "installed-unverified";
+      } else if ((body && body.type) === "mcp" && installCmd && proj?.path) {
+        install = wireMcpServer(proj.path, skillId, installCmd);
+        console.log(`  [skills] mcp "${skillId}" → ${install.status}`);
+      } else if (installCmd) {
+        install = { status: "manual", message: installCmd };
+      }
+
       const agent = { ...agents[idx] };
       const skills = agent.skills || [];
       if (!skills.includes(skillId)) {
@@ -537,17 +620,16 @@ module.exports = function createSkillRoutes(ctx) {
         agents[idx] = agent;
         map[pid] = agents;
         io.writePAgents(map);
-        const proj = io.readProjects().find(p => p.id === pid);
-        if (proj) { agentFs.syncLegionMd(proj, pid); agentFs.syncSkillsMd(proj, agent); }
       }
-      http.json(res, 200, { ok: true, skills: agent.skills });
+      if (proj) { agentFs.syncLegionMd(proj, pid); agentFs.syncSkillsMd(proj, agent); agentFs.buildClaudeAgentMd(proj, aid); }
+      http.json(res, 200, { ok: true, skills: agent.skills, install });
       return true;
     }
 
     // DELETE /api/projects/:pid/agents/:aid/skills/:skillId — unassign skill from agent
     if (urlPath.match(/^\/api\/projects\/[^/]+\/agents\/[^/]+\/skills\/[^/]+$/) && method === "DELETE") {
       const parts = urlPath.split("/");
-      const pid = parts[3], aid = parts[5], skillId = parts[7];
+      const pid = parts[3], aid = parts[5], skillId = decodeURIComponent(parts[7]);
       const map = io.readPAgents();
       const agents = map[pid] || [];
       const idx = agents.findIndex(a => a.id === aid);
@@ -558,7 +640,7 @@ module.exports = function createSkillRoutes(ctx) {
       map[pid] = agents;
       io.writePAgents(map);
       const proj = io.readProjects().find(p => p.id === pid);
-      if (proj) { agentFs.syncLegionMd(proj, pid); agentFs.syncSkillsMd(proj, agent); }
+      if (proj) { agentFs.syncLegionMd(proj, pid); agentFs.syncSkillsMd(proj, agent); agentFs.buildClaudeAgentMd(proj, aid); }
       http.json(res, 200, { ok: true, skills: agent.skills });
       return true;
     }
